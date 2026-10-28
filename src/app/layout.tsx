@@ -36,6 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="th" className={`${thai.variable} h-full antialiased`}>
       <body className="min-h-full font-sans">
+        <div aria-hidden className="app-bg pointer-events-none fixed inset-0 -z-10" />
         {children}
         <Toaster position="top-center" richColors closeButton />
         <RegisterSW />

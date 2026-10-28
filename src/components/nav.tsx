@@ -56,7 +56,7 @@ export function Sidebar({ authed, canLogout }: NavProps) {
       active ? "bg-brand-soft text-brand-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
     );
   return (
-    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface px-4 py-6 lg:flex">
+    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface/80 px-4 py-6 backdrop-blur-xl lg:flex">
       <Link href="/" className="mb-8 flex items-center gap-3 px-2">
         <Logo />
         <div className="min-w-0">

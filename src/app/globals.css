@@ -86,6 +86,30 @@ body {
   color: var(--text);
 }
 
+/* พื้นหลังภาพเกาะช้างเบลอจาง ๆ (เบลอไว้ล่วงหน้าใน scripts/make-backgrounds.mjs) */
+.app-bg {
+  background: url("/bg/island-blur.webp") center / cover no-repeat;
+  opacity: 0.22;
+}
+.app-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* ไล่สีลงด้านล่างให้กลืนกับพื้น อ่านตัวหนังสือง่าย */
+  background: linear-gradient(to bottom, transparent 0%, var(--bg) 85%);
+  opacity: 0.6;
+}
+@media (max-aspect-ratio: 4/5) {
+  .app-bg {
+    background-image: url("/bg/island-blur-tall.webp");
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .app-bg {
+    opacity: 0.32;
+  }
+}
+
 .tabular {
   font-variant-numeric: tabular-nums;
 }
