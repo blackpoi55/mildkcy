@@ -1,4 +1,5 @@
 import { TreePalm } from "lucide-react";
+import Link from "next/link";
 import { Suspense } from "react";
 import { LoginForm } from "./form";
 
@@ -18,6 +19,15 @@ export default function LoginPage() {
         <Suspense>
           <LoginForm />
         </Suspense>
+        <div className="mt-6 flex items-center justify-center gap-4 text-sm">
+          <Link href="/" className="font-medium text-brand hover:underline">
+            ดูแดชบอร์ด (ไม่ต้องล็อกอิน)
+          </Link>
+          <span className="text-line">|</span>
+          <Link href="/install" className="text-muted hover:text-ink">
+            ติดตั้งแอป
+          </Link>
+        </div>
       </div>
     </div>
   );

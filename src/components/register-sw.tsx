@@ -1,0 +1,12 @@
+"use client";
+
+import { useEffect } from "react";
+
+/** ลงทะเบียน service worker (จำเป็นสำหรับติดตั้งเป็นแอป / หน้าออฟไลน์) */
+export function RegisterSW() {
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || process.env.NODE_ENV !== "production") return;
+    navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" }).catch(() => {});
+  }, []);
+  return null;
+}

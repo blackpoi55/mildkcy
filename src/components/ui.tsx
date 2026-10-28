@@ -63,7 +63,7 @@ export function CardHeader({
 }
 
 const field =
-  "w-full h-10 rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15";
+  "w-full h-10 rounded-xl border border-line bg-surface px-3 text-base sm:text-sm text-ink placeholder:text-muted outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15";
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={clsx(field, className)} {...props} />;

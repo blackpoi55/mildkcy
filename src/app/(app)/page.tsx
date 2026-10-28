@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Bike, CalendarCheck, CircleX, Gauge, Shirt, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Bike, CalendarCheck, CircleX, Eye, Gauge, Shirt, Wallet } from "lucide-react";
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
@@ -7,6 +7,7 @@ import { buildDashboard, type Dashboard } from "@/lib/analytics";
 import { getBikes, getLaundry, getRentals } from "@/lib/data";
 import { isISODate, periodLabel, thShort, todayISO, type Period } from "@/lib/dates";
 import { baht, number, pctChange } from "@/lib/format";
+import { isAuthed } from "@/lib/session";
 import { MonthlyChart, Legend } from "./charts";
 import { DailyCard, DashboardControls } from "./dashboard-parts";
 
@@ -59,13 +60,24 @@ function Kpi({
   );
 }
 
-function Content({ d, today }: { d: Dashboard; today: string }) {
+function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: boolean }) {
   const { cur, prev, period } = d;
   const maxBike = Math.max(1, ...d.topBikes.map((b) => b.revenue));
   const maxRoom = Math.max(1, ...d.rooms.map((r) => r.revenue));
 
   return (
     <div className="space-y-6">
+      {!canEdit && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand/30 bg-brand-soft px-4 py-3 text-sm text-brand-ink">
+          <span className="flex items-center gap-2">
+            <Eye className="size-4 shrink-0" />
+            ดูได้อย่างเดียว — เข้าสู่ระบบเพื่อบันทึกเช่ารถ ซักผ้า และจัดการข้อมูลรถ
+          </span>
+          <Link href="/login" className="rounded-lg bg-brand-2 px-3 py-1.5 font-medium text-white">
+            เข้าสู่ระบบ
+          </Link>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <Kpi
           hero
@@ -116,11 +128,11 @@ function Content({ d, today }: { d: Dashboard; today: string }) {
           <CardHeader
             title={period === "day" ? `สถานะรถ · ${thShort(d.date)}` : "รถทำเงินสูงสุด"}
             subtitle={period === "day" ? `ออกเช่า ${d.day.rented} คัน · ว่าง ${d.day.free.length} คัน` : periodLabel(period, d.date)}
-            action={
-              <Link href={`/rentals?d=${d.date}`} className="text-sm font-medium text-brand hover:underline">
+            action={canEdit && (
+<Link href={`/rentals?d=${d.date}`} className="text-sm font-medium text-brand hover:underline">
                 บันทึก
               </Link>
-            }
+)}
           />
           <div className="p-5">
             {period === "day" && d.day.free.length > 0 && (
@@ -172,11 +184,11 @@ function Content({ d, today }: { d: Dashboard; today: string }) {
           <CardHeader
             title="ซักผ้ารายห้อง"
             subtitle={`${number(cur.laundryCount)} ครั้ง · ${number(cur.laundryKg, 1)} กก.`}
-            action={
-              <Link href={`/laundry?d=${d.date}`} className="text-sm font-medium text-brand hover:underline">
+            action={canEdit && (
+<Link href={`/laundry?d=${d.date}`} className="text-sm font-medium text-brand hover:underline">
                 บันทึก
               </Link>
-            }
+)}
           />
           <div className="p-5">
             {d.rooms.length === 0 ? (
@@ -206,11 +218,11 @@ function Content({ d, today }: { d: Dashboard; today: string }) {
             </span>
           }
           subtitle="ภาษีหรือบัตรที่หมดอายุแล้ว หรือจะหมดภายใน 30 วัน"
-          action={
-            <Link href="/bikes" className="text-sm font-medium text-brand hover:underline">
+          action={canEdit && (
+<Link href="/bikes" className="text-sm font-medium text-brand hover:underline">
               ดูรถทั้งหมด
             </Link>
-          }
+)}
         />
         <div className="p-5">
           {d.alerts.length === 0 ? (
@@ -249,7 +261,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
   const today = todayISO();
   const period = (["day", "week", "month"].includes(String(sp.p)) ? sp.p : "month") as Period;
   const date = isISODate(sp.d) ? sp.d : today;
-  const [bikes, rentals, laundry] = await Promise.all([getBikes(), getRentals(), getLaundry()]);
+  const [bikes, rentals, laundry, canEdit] = await Promise.all([getBikes(), getRentals(), getLaundry(), isAuthed()]);
   const d = buildDashboard(period, date, today, bikes, rentals, laundry);
   return (
     <>
@@ -260,7 +272,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
         </div>
         <DashboardControls period={period} date={date} today={today} />
       </div>
-      <Content d={d} today={today} />
+      <Content d={d} today={today} canEdit={canEdit} />
     </>
   );
 }

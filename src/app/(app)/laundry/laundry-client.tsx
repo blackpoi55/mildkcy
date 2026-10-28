@@ -33,9 +33,9 @@ export function LaundryClient({
       <div className="mb-5">
         <DateNav date={date} period="day" today={today} />
       </div>
-      <div className="grid items-start gap-6 lg:grid-cols-[420px_1fr]">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
         <QuickEntry settings={settings} date={date} />
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Segmented
             value={tab}
             onChange={setTab}
@@ -333,7 +333,7 @@ function EditLaundry({ item, settings, onClose }: { item: Laundry | null; settin
             <select
               value={form.room}
               onChange={(e) => setForm({ ...form, room: e.target.value })}
-              className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-sm"
+              className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-base sm:text-sm"
             >
               {[...new Set([...settings.rooms, form.room])].map((r) => (
                 <option key={r}>{r}</option>

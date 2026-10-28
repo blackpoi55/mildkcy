@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Anuphan } from "next/font/google";
 import { Toaster } from "sonner";
+import { RegisterSW } from "@/components/register-sw";
 import "./globals.css";
 
 const thai = Anuphan({
@@ -15,13 +16,20 @@ export const metadata: Metadata = {
     template: "%s · Private Paradise Resort",
   },
   description: "บันทึกการเช่ามอเตอร์ไซค์ ซักผ้า และดูสรุปรายวัน รายสัปดาห์ รายเดือน",
+  applicationName: "Private Paradise Resort",
+  appleWebApp: { capable: true, title: "Paradise", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
+  // iOS รุ่นเก่ายังอ่านแท็กนี้เพื่อเปิดแบบเต็มจอ
+  other: { "apple-mobile-web-app-capable": "yes" },
 };
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f6f8" },
-    { media: "(prefers-color-scheme: dark)", color: "#0d0f14" },
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#161920" },
   ],
+  // ให้เนื้อหาเต็มจอบน iPhone (เว้นขอบด้วย safe-area-inset)
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -30,6 +38,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full font-sans">
         {children}
         <Toaster position="top-center" richColors closeButton />
+        <RegisterSW />
       </body>
     </html>
   );

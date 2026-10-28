@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ออฟไลน์ · Private Paradise Resort</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f5f6f8;
+        --card: #fff;
+        --text: #0f1729;
+        --muted: #8790a0;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d0f14;
+          --card: #161920;
+          --text: #eef0f4;
+          --muted: #7d8595;
+        }
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      .card {
+        background: var(--card);
+        border-radius: 24px;
+        padding: 32px 24px;
+        max-width: 360px;
+        text-align: center;
+      }
+      img {
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 16px 0 8px;
+      }
+      p {
+        color: var(--muted);
+        margin: 0 0 20px;
+        line-height: 1.6;
+      }
+      button {
+        border: 0;
+        border-radius: 12px;
+        padding: 12px 20px;
+        font-size: 16px;
+        background: #6366f1;
+        color: #fff;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <img src="/icons/icon-192.png" alt="" />
+      <h1>ไม่มีการเชื่อมต่ออินเทอร์เน็ต</h1>
+      <p>แอปต้องใช้อินเทอร์เน็ตเพื่อบันทึกและดึงข้อมูลจาก Google Sheets กรุณาเชื่อมต่อแล้วลองใหม่</p>
+      <button onclick="location.reload()">ลองใหม่</button>
+    </div>
+  </body>
+</html>
