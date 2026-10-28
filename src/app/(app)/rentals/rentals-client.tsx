@@ -1,6 +1,6 @@
 "use client";
 
-import { AlarmClock, CalendarClock, Check, CheckCheck, Clock, KeyRound, ListChecks, Pencil, Plus, Receipt, Rows3, Table2, Trash2, Undo2, User } from "lucide-react";
+import { AlarmClock, CalendarClock, Check, CheckCheck, Clock, KeyRound, ListChecks, Pencil, Plus, Receipt, Rows3, Search, Table2, Trash2, Undo2, User, X } from "lucide-react";
 import { useMemo, useOptimistic, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createBooking, deleteRental, deleteRentals, restoreRentals, saveRental, setRentalDay, setReturned } from "@/app/actions";
@@ -16,6 +16,21 @@ import { bookingOf, rentalTotal, type Bike, type Rental } from "@/lib/schema";
 export type RentalView = "day" | "week" | "list";
 
 const escapeHtml = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/** ค้นหาทะเบียนแบบไม่สนช่องว่าง/ขีด: "8245", "1กญ8245", "1กญ - 8245" เจอเหมือนกัน */
+const norm = (t: string) => t.toLowerCase().replace(/[\s-]/g, "");
+
+function NoMatch({ q }: { q?: string }) {
+  return (
+    <Card>
+      <Empty
+        icon={<Search />}
+        title={q ? `ไม่พบ “${q}”` : "ไม่พบรถตามที่กรอง"}
+        hint="ลองพิมพ์ทะเบียนบางส่วน เช่น 8245 หรือเปลี่ยนตัวกรอง"
+      />
+    </Card>
+  );
+}
 
 type Change =
   | { type: "toggle"; bike: Bike; date: string; rented: boolean }
@@ -55,6 +70,8 @@ export function RentalsClient({
   const [editing, setEditing] = useState<Partial<Rental> | null>(null);
   const [renting, setRenting] = useState<Bike | null>(null);
   const [returning, setReturning] = useState<Rental | null>(null);
+  const [q, setQ] = useState("");
+  const [show, setShow] = useState<"all" | "active" | "free" | "returned">("all");
 
   const [items, applyChange] = useOptimistic(rentals, (state, t: Change) =>
     t.type === "add"
@@ -242,6 +259,31 @@ export function RentalsClient({
 
   const period: Period = view === "day" ? "day" : view === "week" ? "week" : "month";
 
+  // ---------------------------------------------------------------- ค้นหา / กรอง
+  const needle = norm(q);
+  const { days: weekDays } = rangeOf("week", date);
+  const rowsOn = (from: string, to: string) => items.filter((r) => r.date >= from && r.date <= to);
+  const textMatch = (b: Bike, rows: Rental[]) =>
+    !needle ||
+    norm(`${b.plate} ${b.brand} ${b.model} ${rows.filter((r) => r.bikeId === b.id).map((r) => r.customer).join(" ")}`).includes(
+      needle,
+    );
+  const dayRows = rowsOn(date, date);
+  const activeIds = new Set(dayRows.filter((r) => r.days > 0 && !r.returnTime).map((r) => r.bikeId));
+  const returnedIds = new Set(dayRows.filter((r) => r.returnTime).map((r) => r.bikeId));
+  const dayBikes = bikes.filter(
+    (b) =>
+      textMatch(b, dayRows) &&
+      (show === "all" ||
+        (show === "active" && activeIds.has(b.id)) ||
+        (show === "free" && !activeIds.has(b.id)) ||
+        (show === "returned" && returnedIds.has(b.id) && !activeIds.has(b.id))),
+  );
+  const weekRows = rowsOn(weekDays[0], weekDays[6]);
+  const weekBikes = bikes.filter((b) => textMatch(b, weekRows));
+  const listRentals = needle ? items.filter((r) => norm(`${r.plate} ${r.customer} ${r.note}`).includes(needle)) : items;
+  const filtering = !!needle || (view === "day" && show !== "all");
+
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -265,9 +307,57 @@ export function RentalsClient({
         </div>
       </div>
 
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 basis-60">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="ค้นหาทะเบียน ยี่ห้อ รุ่น หรือชื่อลูกค้า…"
+            className="pr-9 pl-9"
+            aria-label="ค้นหา"
+          />
+          {q && (
+            <button
+              onClick={() => setQ("")}
+              className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 cursor-pointer place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
+              aria-label="ล้างคำค้น"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+        {view === "day" && (
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            {(
+              [
+                ["all", "ทั้งหมด", bikes.length],
+                ["active", "กำลังเช่า", bikes.filter((b) => activeIds.has(b.id)).length],
+                ["free", "ว่าง", bikes.filter((b) => !activeIds.has(b.id)).length],
+                ["returned", "คืนแล้ว", bikes.filter((b) => returnedIds.has(b.id) && !activeIds.has(b.id)).length],
+              ] as const
+            ).map(([key, label, n]) => (
+              <button
+                key={key}
+                onClick={() => setShow(key)}
+                className={cn(
+                  "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition",
+                  show === key ? "border-brand bg-brand-soft text-brand-ink" : "border-line bg-surface text-ink-2 hover:border-muted",
+                )}
+              >
+                {label}
+                <span className="text-xs text-muted">{n}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {view === "day" && (
         <DayBoard
           bikes={bikes}
+          shown={dayBikes}
+          filtering={filtering}
           rentals={items}
           date={date}
           today={today}
@@ -277,10 +367,15 @@ export function RentalsClient({
           onReturn={markReturned}
         />
       )}
-      {view === "week" && <WeekGrid bikes={bikes} rentals={items} date={date} today={today} onToggle={toggle} />}
+      {view === "week" &&
+        (weekBikes.length ? (
+          <WeekGrid bikes={weekBikes} rentals={items} date={date} today={today} onToggle={toggle} />
+        ) : (
+          <NoMatch q={q} />
+        ))}
       {view === "list" && (
         <MonthList
-          rentals={items}
+          rentals={listRentals}
           date={date}
           onEdit={setEditing}
           onAdd={() => setEditing({ date, days: 1, time: nowTime(), discount: 0, fine: 0 })}
@@ -308,6 +403,8 @@ export function RentalsClient({
 
 function DayBoard({
   bikes,
+  shown,
+  filtering,
   rentals,
   date,
   today,
@@ -317,6 +414,8 @@ function DayBoard({
   onReturn,
 }: {
   bikes: Bike[];
+  shown: Bike[];
+  filtering: boolean;
   rentals: Rental[];
   date: string;
   today: string;
@@ -352,13 +451,17 @@ function DayBoard({
         <MiniStat label="ว่าง" value={`${bikes.length - rented.length + returnedCount} คัน`} />
         <MiniStat label="รายได้วันนี้" value={baht(revenue)} accent />
       </div>
-      {bikes.length === 0 ? (
-        <Card>
-          <Empty icon={<ListChecks />} title="ยังไม่มีรถสถานะ 'เช่า'" hint="ไปที่หน้าทะเบียนรถเพื่อเพิ่มรถก่อน" />
-        </Card>
+      {shown.length === 0 ? (
+        filtering ? (
+          <NoMatch />
+        ) : (
+          <Card>
+            <Empty icon={<ListChecks />} title="ยังไม่มีรถสถานะ 'เช่า'" hint="ไปที่หน้าทะเบียนรถเพื่อเพิ่มรถก่อน" />
+          </Card>
+        )
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {bikes.map((b) => {
+          {shown.map((b) => {
             const r = byBike.get(b.id);
             const on = !!r;
             const back = !!r?.returnTime;
