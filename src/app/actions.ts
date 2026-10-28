@@ -185,9 +185,14 @@ export async function createBooking(input: {
   dueTime: string;
   customer?: string;
   note?: string;
+  discount?: number;
+  fine?: number;
 }) {
   return guard(async (): Promise<Rental[]> => {
     if (!isISODate(input.date) || !isISODate(input.dueDate)) throw new Error("วันที่ไม่ถูกต้อง");
+    const discount = num(input.discount);
+    const fine = num(input.fine);
+    if (discount < 0 || fine < 0) throw new Error("ส่วนลด / ค่าปรับ ต้องไม่ติดลบ");
     if (!TIME_RE.test(input.time) || !TIME_RE.test(input.dueTime)) throw new Error("เวลาไม่ถูกต้อง");
     if (input.dueDate < input.date) throw new Error("วันคืนต้องไม่ก่อนวันเช่า");
     const days = Math.max(1, diffDays(input.date, input.dueDate));
@@ -202,8 +207,8 @@ export async function createBooking(input: {
     );
     if (clash) throw new Error(`${bike.plate} ยังไม่ได้คืนรถของการเช่าวันที่ ${clash.date}`);
     const bookingId = newId();
-    const rows = dates.map((date) =>
-      newRental(bike, {
+    const rows = dates.map((date, i) => {
+      const r = newRental(bike, {
         date,
         time: input.time,
         dueDate: input.dueDate,
@@ -211,8 +216,15 @@ export async function createBooking(input: {
         bookingId,
         customer: input.customer,
         note: input.note,
-      }),
-    );
+      });
+      // ส่วนลด/ค่าปรับของทั้งการเช่า เก็บไว้ที่วันแรก (เหมือนใน Excel ที่ใส่ไว้แถวเดียว)
+      if (i === 0 && (discount || fine)) {
+        r.discount = discount;
+        r.fine = fine;
+        r.total = rentalTotal(r);
+      }
+      return r;
+    });
     await store.insert("rentals", rows);
     return rows;
   });
@@ -222,8 +234,13 @@ export async function createBooking(input: {
  * ลูกค้านำรถมาคืน (time = null คือยกเลิกการคืน)
  * removeFuture: คืนก่อนกำหนด → ลบบันทึกของวันที่ยังไม่ถึงออก (ไม่คิดเงิน) และส่งกลับไปให้กดเลิกทำได้
  */
-export async function setReturned(id: string, time: string | null, removeFuture = false) {
-  return guard(async (): Promise<{ time: string; removed: Rental[] }> => {
+export async function setReturned(
+  id: string,
+  time: string | null,
+  removeFuture = false,
+  extras?: { discount?: number; fine?: number; note?: string },
+) {
+  return guard(async (): Promise<{ time: string; removed: Rental[]; before: Rental | null }> => {
     const t = time === null ? "" : str(time) || nowTime();
     if (t && !TIME_RE.test(t)) throw new Error("เวลาไม่ถูกต้อง");
     const store = getStore();
@@ -233,11 +250,22 @@ export async function setReturned(id: string, time: string | null, removeFuture 
     const booking = all.filter((r) => r.bikeId === row.bikeId && bookingOf(r) === bookingOf(row));
     const removed = t && removeFuture ? booking.filter((r) => r.date > row.date) : [];
     if (removed.length) await store.remove("rentals", removed.map((r) => r.id));
+    // ส่วนลด/ค่าปรับ/หมายเหตุ บันทึกที่แถวของวันที่กดคืน แล้วคำนวณยอดใหม่
+    let rowPatch: Partial<Rental> = {};
+    if (extras) {
+      const discount = num(extras.discount);
+      const fine = num(extras.fine);
+      if (discount < 0 || fine < 0) throw new Error("ส่วนลด / ค่าปรับ ต้องไม่ติดลบ");
+      const note = str(extras.note);
+      rowPatch = { discount, fine, note, total: rentalTotal({ ...row, discount, fine }) };
+    }
     await store.updateMany(
       "rentals",
-      booking.filter((r) => !removed.includes(r) && r.returnTime !== t).map((r) => ({ id: r.id, patch: { returnTime: t } })),
+      booking
+        .filter((r) => !removed.includes(r) && (r.returnTime !== t || (r.id === row.id && extras)))
+        .map((r) => ({ id: r.id, patch: r.id === row.id ? { returnTime: t, ...rowPatch } : { returnTime: t } })),
     );
-    return { time: t, removed };
+    return { time: t, removed, before: extras ? row : null };
   });
 }
 

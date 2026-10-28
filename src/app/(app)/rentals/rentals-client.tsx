@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { createBooking, deleteRental, deleteRentals, restoreRentals, saveRental, setRentalDay, setReturned } from "@/app/actions";
 import { DateNav, useSetParam } from "@/components/date-nav";
 import { Badge, Button, Card, Empty, Field, Input, Modal, Segmented, Select, Textarea, cn } from "@/components/ui";
-import { askDialog, confirmDialog } from "@/lib/confirm";
+import { confirmDialog } from "@/lib/confirm";
 import { TH_DAYS_SHORT, addDays, diffDays, nowTime, rangeOf, thLong, thShort, type Period } from "@/lib/dates";
 import { baht } from "@/lib/format";
 import { useAction } from "@/lib/hooks";
@@ -21,7 +21,17 @@ type Change =
   | { type: "toggle"; bike: Bike; date: string; rented: boolean }
   | { type: "add"; rows: Rental[] }
   /** คืนรถทั้งการเช่า (ทุกวันของ booking) — removeAfter: ลบวันที่หลังจากนี้ (คืนก่อนกำหนด) */
-  | { type: "return"; key: string; bikeId: string; time: string; removeAfter: string | null };
+  | {
+      type: "return";
+      key: string;
+      bikeId: string;
+      time: string;
+      removeAfter: string | null;
+      rowId: string;
+      extras?: Extras;
+    };
+
+type Extras = { discount: number; fine: number; note: string };
 
 const sameBooking = (r: Rental, key: string, bikeId: string) => r.bikeId === bikeId && bookingOf(r) === key;
 
@@ -44,6 +54,7 @@ export function RentalsClient({
   const [, start] = useTransition();
   const [editing, setEditing] = useState<Partial<Rental> | null>(null);
   const [renting, setRenting] = useState<Bike | null>(null);
+  const [returning, setReturning] = useState<Rental | null>(null);
 
   const [items, applyChange] = useOptimistic(rentals, (state, t: Change) =>
     t.type === "add"
@@ -51,7 +62,13 @@ export function RentalsClient({
       : t.type === "return"
         ? state
             .filter((r) => !(t.removeAfter && sameBooking(r, t.key, t.bikeId) && r.date > t.removeAfter))
-            .map((r) => (sameBooking(r, t.key, t.bikeId) ? { ...r, returnTime: t.time } : r))
+            .map((r) =>
+              !sameBooking(r, t.key, t.bikeId)
+                ? r
+                : r.id === t.rowId && t.extras
+                  ? { ...r, ...t.extras, returnTime: t.time, total: rentalTotal({ ...r, ...t.extras }) }
+                  : { ...r, returnTime: t.time },
+            )
         : t.rented
       ? [
           ...state,
@@ -106,56 +123,82 @@ export function RentalsClient({
       }
     });
 
-  const doReturn = (r: Rental, returned: boolean, removeFuture: boolean, undo?: { removed: Rental[]; prevTime: string }) =>
-    start(async () => {
-      const key = bookingOf(r);
-      const time = returned ? (undo ? undo.prevTime : nowTime()) : "";
-      applyChange({ type: "return", key, bikeId: r.bikeId, time, removeAfter: removeFuture ? r.date : null });
-      const res = await setReturned(r.id, returned ? time : null, removeFuture);
-      if (!res.ok) return void toast.error(res.error);
-      if (undo) {
-        if (undo.removed.length) await restoreRentals(undo.removed);
-        return void toast.success("เลิกทำแล้ว");
-      }
-      const removed = res.data?.removed ?? [];
-      toast.success(
-        returned
-          ? `คืนรถ ${r.plate} แล้ว · ${time} น.${removed.length ? ` (ลบ ${removed.length} วันที่เหลือ)` : ""}`
-          : `ยกเลิกการคืนรถ ${r.plate} แล้ว`,
-        {
-          duration: 10_000,
-          action: {
-            label: "เลิกทำ",
-            onClick: () => doReturn(r, !returned, false, { removed, prevTime: r.returnTime }),
+  const runReturn = (r: Rental, time: string | null, removeFuture: boolean, extras?: Extras) => {
+    applyChange({
+      type: "return",
+      key: bookingOf(r),
+      bikeId: r.bikeId,
+      time: time ?? "",
+      removeAfter: removeFuture ? r.date : null,
+      rowId: r.id,
+      extras,
+    });
+    return setReturned(r.id, time, removeFuture, extras);
+  };
+
+  /** บันทึกคืนรถจากหน้าต่างคืนรถ — มีปุ่มเลิกทำ (คืนค่าส่วนลด/ค่าปรับ/หมายเหตุเดิม + วันที่ถูกลบ) */
+  const confirmReturn = (r: Rental, input: ReturnInput) =>
+    new Promise<boolean>((resolve) =>
+      start(async () => {
+        const extras = { discount: input.discount, fine: input.fine, note: input.note };
+        const res = await runReturn(r, input.time, input.removeFuture, extras);
+        if (!res.ok) {
+          toast.error(res.error);
+          return resolve(false);
+        }
+        resolve(true);
+        const removed = res.data?.removed ?? [];
+        toast.success(
+          `คืนรถ ${r.plate} แล้ว · ${input.time} น.${removed.length ? ` (ลบ ${removed.length} วันที่เหลือ)` : ""}`,
+          {
+            duration: 10_000,
+            action: {
+              label: "เลิกทำ",
+              onClick: () =>
+                start(async () => {
+                  const u = await runReturn(r, null, false, { discount: r.discount, fine: r.fine, note: r.note });
+                  if (u.ok && removed.length) await restoreRentals(removed);
+                  if (u.ok) toast.success("เลิกทำแล้ว");
+                  else toast.error(u.error);
+                }),
+            },
           },
+        );
+      }),
+    );
+
+  const unReturn = (r: Rental) =>
+    start(async () => {
+      const prev = r.returnTime;
+      const res = await runReturn(r, null, false);
+      if (!res.ok) return void toast.error(res.error);
+      toast.success(`ยกเลิกการคืนรถ ${r.plate} แล้ว`, {
+        duration: 10_000,
+        action: {
+          label: "เลิกทำ",
+          onClick: () =>
+            start(async () => {
+              const u = await runReturn(r, prev, false);
+              if (u.ok) toast.success("เลิกทำแล้ว");
+              else toast.error(u.error);
+            }),
         },
-      );
+      });
     });
 
-  /** ลูกค้านำรถมาคืน — ถ้ายังมีวันที่จองไว้หลังจากนี้ ถามก่อนว่าจะลบวันที่เหลือไหม */
-  const markReturned = async (r: Rental, returned: boolean) => {
-    const future = returned ? items.filter((x) => sameBooking(x, bookingOf(r), r.bikeId) && x.date > r.date) : [];
-    let removeFuture = false;
-    if (future.length) {
-      const ans = await askDialog({
-        title: `คืนรถ ${escapeHtml(r.plate)} ก่อนกำหนด`,
-        html: `ยังมีบันทึกเช่าวันที่ ${future.map((f) => thShort(f.date)).join(", ")} (${baht(
-          future.reduce((x, f) => x + f.total, 0),
-        )})<br><small>ลบวันที่เหลือ = ไม่คิดเงินวันที่ยังไม่ได้ใช้</small>`,
-        confirmText: "คืนรถ + ลบวันที่เหลือ",
-        denyText: "คืนรถ (คิดเงินเต็ม)",
-      });
-      if (ans === "cancel") return;
-      removeFuture = ans === "confirm";
-    }
-    doReturn(r, returned, removeFuture);
-  };
+  /** กดคืนรถ = เปิดหน้าต่างคืนรถ (แก้เวลา ส่วนลด ค่าปรับ หมายเหตุได้) / ยกเลิกการคืน = ทำทันที */
+  const markReturned = (r: Rental, returned: boolean) => (returned ? setReturning(r) : unReturn(r));
 
   /** เช่าใหม่พร้อมกำหนดคืน (สร้างบันทึกทุกวันจนถึงวันคืน) — มีปุ่มเลิกทำ */
   const book = (bike: Bike, input: RentInput) =>
     new Promise<boolean>((resolve) =>
       start(async () => {
-        const res = await createBooking({ bikeId: bike.id, ...input });
+        const res = await createBooking({
+          bikeId: bike.id,
+          ...input,
+          discount: Number(input.discount) || 0,
+          fine: Number(input.fine) || 0,
+        });
         if (!res.ok) {
           toast.error(res.error);
           return resolve(false);
@@ -246,6 +289,17 @@ export function RentalsClient({
 
       <RentalForm rental={editing} bikes={allBikes} onClose={() => setEditing(null)} />
       <RentDialog bike={renting} date={date} today={today} onClose={() => setRenting(null)} onSubmit={book} />
+      <ReturnDialog
+        rental={returning}
+        future={
+          returning
+            ? items.filter((x) => sameBooking(x, bookingOf(returning), returning.bikeId) && x.date > returning.date)
+            : []
+        }
+        today={today}
+        onClose={() => setReturning(null)}
+        onSubmit={confirmReturn}
+      />
     </>
   );
 }
@@ -750,7 +804,16 @@ export function RentalForm({ rental, bikes, onClose }: { rental: Partial<Rental>
 
 // ---------------------------------------------------------------- เช่าใหม่ + กำหนดคืน
 
-type RentInput = { date: string; time: string; dueDate: string; dueTime: string; customer: string };
+type RentInput = {
+  date: string;
+  time: string;
+  dueDate: string;
+  dueTime: string;
+  customer: string;
+  discount: string;
+  fine: string;
+  note: string;
+};
 
 function RentDialog({
   bike,
@@ -765,7 +828,16 @@ function RentDialog({
   onClose: () => void;
   onSubmit: (bike: Bike, input: RentInput) => Promise<boolean>;
 }) {
-  const [form, setForm] = useState<RentInput>({ date: "", time: "", dueDate: "", dueTime: "", customer: "" });
+  const [form, setForm] = useState<RentInput>({
+    date: "",
+    time: "",
+    dueDate: "",
+    dueTime: "",
+    customer: "",
+    discount: "",
+    fine: "",
+    note: "",
+  });
   const [preset, setPreset] = useState("24h");
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<Bike | null>(null);
@@ -773,7 +845,7 @@ function RentDialog({
     setLast(bike);
     if (bike) {
       const time = date === today ? nowTime() : "09:00";
-      setForm({ date, time, dueDate: addDays(date, 1), dueTime: time, customer: "" });
+      setForm({ date, time, dueDate: addDays(date, 1), dueTime: time, customer: "", discount: "", fine: "", note: "" });
       setPreset("24h");
     }
   }
@@ -902,17 +974,220 @@ function RentDialog({
             />
           </Field>
 
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="ส่วนลด (ไม่บังคับ)">
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                placeholder="0"
+                value={form.discount}
+                onChange={(e) => setForm((f) => ({ ...f, discount: e.target.value }))}
+              />
+            </Field>
+            <Field label="ค่าปรับ (ไม่บังคับ)">
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                placeholder="0"
+                value={form.fine}
+                onChange={(e) => setForm((f) => ({ ...f, fine: e.target.value }))}
+              />
+            </Field>
+            <Field label="หมายเหตุ (ไม่บังคับ)" className="col-span-2">
+              <Input
+                value={form.note}
+                onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+                placeholder="เช่น มัดจำ 1,000 / ถ่ายรูปรถแล้ว / ใบขับขี่"
+              />
+            </Field>
+          </div>
+
           <div className="rounded-xl bg-brand-soft px-4 py-3 text-brand-ink">
             <div className="flex items-center justify-between">
               <span className="text-sm">
                 เช่า {days} วัน · คืน {dueText(form.dueDate, form.dueTime, today)}
+                {(Number(form.discount) > 0 || Number(form.fine) > 0) && (
+                  <span className="block text-xs opacity-80">
+                    {baht(days * bike.dailyRate)}
+                    {Number(form.discount) > 0 && ` − ลด ${baht(Number(form.discount))}`}
+                    {Number(form.fine) > 0 && ` + ปรับ ${baht(Number(form.fine))}`}
+                  </span>
+                )}
               </span>
-              <span className="tabular text-xl font-bold">{baht(days * bike.dailyRate)}</span>
+              <span className="tabular text-xl font-bold">
+                {baht(days * bike.dailyRate - (Number(form.discount) || 0) + (Number(form.fine) || 0))}
+              </span>
             </div>
             {days > 1 && <p className="mt-1 text-xs opacity-80">ระบบจะลงบันทึกให้ทุกวัน ({days} วัน) คิดเงินรายวัน</p>}
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------- คืนรถ
+
+type ReturnInput = { time: string; discount: number; fine: number; note: string; removeFuture: boolean };
+
+function ReturnDialog({
+  rental,
+  future,
+  today,
+  onClose,
+  onSubmit,
+}: {
+  rental: Rental | null;
+  future: Rental[];
+  today: string;
+  onClose: () => void;
+  onSubmit: (r: Rental, input: ReturnInput) => Promise<boolean>;
+}) {
+  const [form, setForm] = useState({ time: "", discount: "", fine: "", note: "", removeFuture: true });
+  const [busy, setBusy] = useState(false);
+  const [last, setLast] = useState<Rental | null>(null);
+  if (rental !== last) {
+    setLast(rental);
+    if (rental) {
+      setForm({
+        time: nowTime(),
+        discount: rental.discount ? String(rental.discount) : "",
+        fine: rental.fine ? String(rental.fine) : "",
+        note: rental.note,
+        removeFuture: true,
+      });
+    }
+  }
+  if (!rental) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
+
+  const late = rental.dueDate ? overdueMinutes(rental, today, form.time || nowTime()) : 0;
+  const dayTotal = rentalTotal({
+    days: rental.days,
+    price: rental.price,
+    discount: Number(form.discount) || 0,
+    fine: Number(form.fine) || 0,
+  });
+  const futureTotal = future.reduce((s, f) => s + f.total, 0);
+  const valid = /^\d{1,2}:\d{2}$/.test(form.time) && Number(form.discount || 0) >= 0 && Number(form.fine || 0) >= 0;
+
+  const submit = async () => {
+    setBusy(true);
+    const ok = await onSubmit(rental, {
+      time: form.time,
+      discount: Number(form.discount) || 0,
+      fine: Number(form.fine) || 0,
+      note: form.note.trim(),
+      removeFuture: future.length > 0 && form.removeFuture,
+    });
+    setBusy(false);
+    if (ok) onClose();
+  };
+
+  const choice = (on: boolean, title: string, sub: string, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex-1 cursor-pointer rounded-xl border px-3 py-2.5 text-left transition",
+        on ? "border-brand bg-brand-soft text-brand-ink" : "border-line text-ink-2 hover:border-brand/50",
+      )}
+    >
+      <span className="block text-sm font-semibold">{title}</span>
+      <span className="text-xs opacity-80">{sub}</span>
+    </button>
+  );
+
+  return (
+    <Modal
+      open={!!rental}
+      onClose={onClose}
+      title={`คืนรถ ${rental.plate}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            ยกเลิก
+          </Button>
+          <Button disabled={!valid || busy} onClick={submit}>
+            <CheckCheck className="size-4" /> {busy ? "กำลังบันทึก…" : "บันทึกการคืนรถ"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <p className="-mt-1 text-sm text-muted">
+          เช่า {thShort(rental.date)} {rental.time}
+          {rental.dueDate && ` · กำหนดคืน ${dueText(rental.dueDate, rental.dueTime, today)}`}
+          {rental.customer && ` · ${rental.customer}`}
+        </p>
+        {late > 0 && (
+          <p className="-mt-2 flex items-center gap-1.5 rounded-xl bg-bad-soft px-3 py-2 text-sm text-bad">
+            <AlarmClock className="size-4 shrink-0" /> คืนช้ากว่ากำหนด {durationText(late)} — ใส่ค่าปรับได้ (ไม่บังคับ)
+          </p>
+        )}
+
+        <Field label="เวลาที่คืน">
+          <Input type="time" value={form.time} onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))} />
+        </Field>
+
+        {future.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium text-ink-2">
+              คืนก่อนกำหนด — ยังมีบันทึกวันที่ {future.map((f) => thShort(f.date)).join(", ")} ({baht(futureTotal)})
+            </p>
+            <div className="flex gap-2">
+              {choice(form.removeFuture, "ลบวันที่เหลือ", "ไม่คิดเงินวันที่ยังไม่ได้ใช้", () =>
+                setForm((f) => ({ ...f, removeFuture: true })),
+              )}
+              {choice(!form.removeFuture, "คิดเงินเต็ม", `เก็บไว้ ${future.length} วัน`, () =>
+                setForm((f) => ({ ...f, removeFuture: false })),
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="ส่วนลด (ไม่บังคับ)">
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              placeholder="0"
+              value={form.discount}
+              onChange={(e) => setForm((f) => ({ ...f, discount: e.target.value }))}
+            />
+          </Field>
+          <Field label="ค่าปรับ (ไม่บังคับ)">
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              placeholder="0"
+              value={form.fine}
+              onChange={(e) => setForm((f) => ({ ...f, fine: e.target.value }))}
+            />
+          </Field>
+          <Field label="หมายเหตุ (ไม่บังคับ)" className="col-span-2">
+            <Textarea
+              value={form.note}
+              onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="เช่น คืนช้า / ยางแบน / รถมีรอย / คืนมัดจำแล้ว"
+            />
+          </Field>
+        </div>
+
+        <div className="flex items-center justify-between rounded-xl bg-good-soft px-4 py-3 text-good">
+          <span className="text-sm">
+            ยอดวันที่ {thShort(rental.date)}
+            {!form.removeFuture && future.length > 0 && (
+              <span className="block text-xs opacity-80">+ วันที่เหลือ {baht(futureTotal)}</span>
+            )}
+          </span>
+          <span className="tabular text-xl font-bold">
+            {baht(dayTotal + (!form.removeFuture ? futureTotal : 0))}
+          </span>
+        </div>
+      </div>
     </Modal>
   );
 }
