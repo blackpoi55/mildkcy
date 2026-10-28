@@ -11,6 +11,8 @@ function base(): SweetAlertOptions {
     theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
     reverseButtons: true,
     focusCancel: true,
+    // ไม่ปิดเมื่อคลิกนอกกล่อง กันเผลอปิด
+    allowOutsideClick: false,
     buttonsStyling: false,
   };
 }

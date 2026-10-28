@@ -1,6 +1,7 @@
 // แทนที่ข้อมูลรถ + เช่ารถ ใน Google Sheet ด้วย data/seed.json (สร้างจาก Excel ด้วย extract_seed.py)
 // ใช้เมื่อต้องการ "ล้างของเดิมแล้วเอาข้อมูลจาก Excel ล่าสุดทับ" — ไม่แตะแท็บ ตั้งค่า / ซักผ้า
-//   node --env-file=.env.local scripts/replace-from-seed.mjs
+//   node --env-file=.env.local scripts/replace-from-seed.mjs                 (รถ + เช่ารถ)
+//   node --env-file=.env.local scripts/replace-from-seed.mjs --rentals-only  (เฉพาะเช่ารถ ใช้รถเดิมในชีต)
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { JWT } from "google-auth-library";
@@ -33,9 +34,20 @@ async function replace(sheet, toObject) {
   console.log(`${sheet}: ลบ ${count} แถวเดิม, ใส่ ${rows.length} แถวใหม่`);
 }
 
-const bikeIds = new Map(seed.bikes.map((b) => [b.plate, newId()]));
+const rentalsOnly = process.argv.includes("--rentals-only");
+let bikeIds;
+if (rentalsOnly) {
+  // ใช้ id รถที่มีอยู่ในชีต (จับคู่ด้วยทะเบียน)
+  const rows = (await req(`/values/${range("รถ", "A1:Z")}`)).values ?? [];
+  const [head, ...data] = rows;
+  bikeIds = new Map(data.map((r) => [r[head.indexOf("ทะเบียน")], r[head.indexOf("id")]]));
+  const missing = [...new Set(seed.rentals.map((r) => r.plate))].filter((p) => !bikeIds.has(p));
+  if (missing.length) throw new Error(`ทะเบียนเหล่านี้ไม่มีในแท็บรถ: ${missing.join(", ")}`);
+} else {
+  bikeIds = new Map(seed.bikes.map((b) => [b.plate, newId()]));
+}
 
-await replace("รถ", () =>
+if (!rentalsOnly) await replace("รถ", () =>
   seed.bikes.map((b) => ({
     id: bikeIds.get(b.plate),
     ยี่ห้อ: b.brand,
