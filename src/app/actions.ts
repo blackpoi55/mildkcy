@@ -1,0 +1,278 @@
+"use server";
+
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { cookies } from "next/headers";
+import { refresh } from "next/cache";
+import { redirect } from "next/navigation";
+import { AUTH_COOKIE, authToken, isValidToken } from "@/lib/auth";
+import { getSettings } from "@/lib/data";
+import type { LaundryPrice } from "@/lib/laundry";
+import { isISODate, nowTime } from "@/lib/dates";
+import { rentalTotal, type Bike, type Laundry, type Rental } from "@/lib/schema";
+import { getStore, newId } from "@/lib/store";
+
+export type Result<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
+
+async function guard<T>(fn: () => Promise<T>): Promise<Result<T>> {
+  try {
+    if (!(await isValidToken((await cookies()).get(AUTH_COOKIE)?.value))) {
+      return { ok: false, error: "กรุณาเข้าสู่ระบบใหม่" };
+    }
+    const data = await fn();
+    refresh();
+    return { ok: true, data };
+  } catch (e) {
+    console.error(e);
+    return { ok: false, error: e instanceof Error ? e.message : "เกิดข้อผิดพลาด" };
+  }
+}
+
+const now = () => new Date().toISOString();
+const num = (v: unknown) => {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return Number.isFinite(n) ? n : 0;
+};
+const str = (v: unknown) => String(v ?? "").trim();
+
+// ---------------------------------------------------------------- เข้าสู่ระบบ
+
+export async function login(_: string | null, form: FormData) {
+  const password = str(form.get("password"));
+  if (!process.env.APP_PASSWORD || password !== process.env.APP_PASSWORD) return "รหัสผ่านไม่ถูกต้อง";
+  (await cookies()).set(AUTH_COOKIE, await authToken(password), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 60 * 60 * 24 * 90,
+    path: "/",
+  });
+  const next = str(form.get("next"));
+  redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/");
+}
+
+export async function logout() {
+  (await cookies()).delete(AUTH_COOKIE);
+  redirect("/login");
+}
+
+// ---------------------------------------------------------------- รถ
+
+export async function saveBike(input: Partial<Bike>) {
+  return guard(async () => {
+    const plate = str(input.plate);
+    if (!plate) throw new Error("กรุณากรอกทะเบียนรถ");
+    const store = getStore();
+    const bikes = await store.all("bikes");
+    if (bikes.some((b) => b.plate === plate && b.id !== input.id)) throw new Error(`ทะเบียน ${plate} มีอยู่แล้ว`);
+    const row: Bike = {
+      id: input.id || newId(),
+      brand: str(input.brand).toUpperCase(),
+      model: str(input.model),
+      plate,
+      province: str(input.province),
+      source: str(input.source),
+      taxExpiry: str(input.taxExpiry),
+      owner: str(input.owner),
+      cardExpiry: str(input.cardExpiry),
+      transferKit: str(input.transferKit),
+      transferTo: str(input.transferTo),
+      status: str(input.status) || "เช่า",
+      dailyRate: num(input.dailyRate),
+      note: str(input.note),
+      createdAt: input.createdAt || now(),
+    };
+    if (input.id) {
+      await store.update("bikes", input.id, row);
+      // ทะเบียนเปลี่ยน → อัปเดตบันทึกเช่าที่ผูกกับรถคันนี้ด้วย
+      const old = bikes.find((b) => b.id === input.id);
+      if (old && old.plate !== plate) {
+        const rentals = (await store.all("rentals")).filter((r) => r.bikeId === input.id);
+        for (const r of rentals) await store.update("rentals", r.id, { plate });
+      }
+    } else {
+      await store.insert("bikes", [row]);
+    }
+  });
+}
+
+export async function deleteBike(id: string) {
+  return guard(async () => {
+    const used = (await getStore().all("rentals")).some((r) => r.bikeId === id);
+    if (used) throw new Error("รถคันนี้มีประวัติการเช่าอยู่ เปลี่ยนสถานะเป็น 'ขายแล้ว' แทนการลบ");
+    await getStore().remove("bikes", [id]);
+  });
+}
+
+// ---------------------------------------------------------------- เช่ารถ
+
+/** ติ๊ก/ยกเลิก การเช่ารถ 1 คันใน 1 วัน (ใช้กับหน้าบันทึกรายวันและตารางสัปดาห์) */
+export async function setRentalDay(input: { bikeId: string; date: string; rented: boolean; time?: string }) {
+  return guard(async () => {
+    if (!isISODate(input.date)) throw new Error("วันที่ไม่ถูกต้อง");
+    const store = getStore();
+    const existing = (await store.all("rentals")).filter(
+      (r) => r.bikeId === input.bikeId && r.date === input.date,
+    );
+    if (!input.rented) {
+      if (existing.length) await store.remove("rentals", existing.map((r) => r.id));
+      return;
+    }
+    if (existing.length) return;
+    const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
+    if (!bike) throw new Error("ไม่พบรถคันนี้");
+    const r: Rental = {
+      id: newId(),
+      date: input.date,
+      time: str(input.time) || nowTime(),
+      bikeId: bike.id,
+      plate: bike.plate,
+      days: 1,
+      price: bike.dailyRate,
+      discount: 0,
+      fine: 0,
+      total: 0,
+      customer: "",
+      note: "",
+      createdAt: now(),
+    };
+    r.total = rentalTotal(r);
+    await store.insert("rentals", [r]);
+  });
+}
+
+export async function saveRental(input: Partial<Rental>) {
+  return guard(async () => {
+    if (!isISODate(input.date)) throw new Error("กรุณาเลือกวันที่");
+    const store = getStore();
+    const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
+    if (!bike) throw new Error("กรุณาเลือกรถ");
+    const r: Rental = {
+      id: input.id || newId(),
+      date: input.date,
+      time: str(input.time),
+      bikeId: bike.id,
+      plate: bike.plate,
+      days: num(input.days ?? 1),
+      price: num(input.price),
+      discount: num(input.discount),
+      fine: num(input.fine),
+      total: 0,
+      customer: str(input.customer),
+      note: str(input.note),
+      createdAt: input.createdAt || now(),
+    };
+    r.total = rentalTotal(r);
+    if (input.id) await store.update("rentals", input.id, r);
+    else await store.insert("rentals", [r]);
+  });
+}
+
+export async function deleteRental(id: string) {
+  return guard(() => getStore().remove("rentals", [id]));
+}
+
+// ---------------------------------------------------------------- ซักผ้า
+
+export async function saveLaundry(input: Partial<Laundry>) {
+  return guard(async () => {
+    if (!isISODate(input.date)) throw new Error("กรุณาเลือกวันที่");
+    const room = str(input.room);
+    if (!room) throw new Error("กรุณาเลือกห้อง");
+    const kg = num(input.kg);
+    if (kg <= 0) throw new Error("กรุณาระบุน้ำหนัก");
+    const row: Laundry = {
+      id: input.id || newId(),
+      date: input.date,
+      time: str(input.time) || nowTime(),
+      room,
+      kg,
+      price: num(input.price),
+      paid: !!input.paid,
+      note: str(input.note),
+      createdAt: input.createdAt || now(),
+    };
+    const store = getStore();
+    if (input.id) await store.update("laundry", input.id, row);
+    else await store.insert("laundry", [row]);
+  });
+}
+
+export async function deleteLaundry(id: string) {
+  return guard(() => getStore().remove("laundry", [id]));
+}
+
+export async function setLaundryPaid(ids: string[], paid: boolean) {
+  return guard(async () => {
+    for (const id of ids) await getStore().update("laundry", id, { paid });
+  });
+}
+
+// ---------------------------------------------------------------- ตั้งค่า
+
+export async function saveSettings(input: { laundryRate?: number; laundryPrices?: LaundryPrice[]; rooms?: string[] }) {
+  return guard(async () => {
+    const store = getStore();
+    const existing = new Set((await store.all("settings")).map((s) => s.id));
+    const entries: [string, string][] = [];
+    if (input.laundryRate != null) entries.push(["laundryRate", String(num(input.laundryRate))]);
+    if (input.laundryPrices) {
+      const clean = input.laundryPrices
+        .map((p) => ({ kg: num(p.kg), price: num(p.price) }))
+        .filter((p) => p.kg > 0)
+        .sort((a, b) => a.kg - b.kg);
+      entries.push(["laundryPrices", JSON.stringify(clean)]);
+    }
+    if (input.rooms) entries.push(["rooms", input.rooms.map(str).filter(Boolean).join(",")]);
+    for (const [id, value] of entries) {
+      if (existing.has(id)) await store.update("settings", id, { value });
+      else await store.insert("settings", [{ id, value }]);
+    }
+  });
+}
+
+/** นำเข้าข้อมูลจาก data/seed.json (สร้างจากไฟล์ Excel ด้วย scripts/extract_seed.py) */
+export async function importSeed() {
+  return guard(async () => {
+    let seed: { bikes: Omit<Bike, "id" | "note" | "createdAt">[]; rentals: Omit<Rental, "id" | "bikeId" | "total" | "createdAt">[] };
+    try {
+      seed = JSON.parse(await fs.readFile(path.join(process.cwd(), "data", "seed.json"), "utf8"));
+    } catch {
+      throw new Error("ไม่พบไฟล์ data/seed.json");
+    }
+    const store = getStore();
+    const bikes = await store.all("bikes");
+    const byPlate = new Map(bikes.map((b) => [b.plate, b]));
+    const newBikes: Bike[] = [];
+    for (const b of seed.bikes) {
+      if (byPlate.has(b.plate)) continue;
+      const row: Bike = { ...b, id: newId(), note: "", createdAt: now() };
+      byPlate.set(b.plate, row);
+      newBikes.push(row);
+    }
+    await store.insert("bikes", newBikes);
+
+    const rentals = await store.all("rentals");
+    const seen = new Set(rentals.map((r) => `${r.plate}|${r.date}`));
+    const newRentals: Rental[] = [];
+    for (const r of seed.rentals) {
+      const bike = byPlate.get(r.plate);
+      if (!bike || (r.days > 0 && seen.has(`${r.plate}|${r.date}`))) continue;
+      const row: Rental = { ...r, id: newId(), bikeId: bike.id, total: 0, createdAt: now() };
+      row.total = rentalTotal(row);
+      newRentals.push(row);
+    }
+    await store.insert("rentals", newRentals);
+
+    const settings = await store.all("settings");
+    if (!settings.length) {
+      const s = await getSettings();
+      await store.insert("settings", [
+        { id: "laundryRate", value: String(s.laundryRate) },
+        { id: "laundryPrices", value: JSON.stringify(s.laundryPrices) },
+        { id: "rooms", value: s.rooms.join(",") },
+      ]);
+    }
+    return { bikes: newBikes.length, rentals: newRentals.length };
+  });
+}

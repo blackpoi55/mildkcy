@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #e3e6eb;
+  --text: #0f1729;
+  --text-2: #4b5567;
+  --muted: #8790a0;
+  --brand: #4f46e5;
+  --brand-2: #6366f1;
+  --brand-soft: #eef0ff;
+  --brand-ink: #3730a3;
+  /* ชุดสีกราฟ (ตรวจสอบสีสำหรับผู้มีภาวะตาบอดสีแล้ว) */
+  --series-rent: #2a78d6;
+  --series-laundry: #eb6834;
+  --grid: #eceef2;
+  /* สถานะ */
+  --good: #0ca30c;
+  --good-soft: #e7f6e7;
+  --warn: #b77900;
+  --warn-soft: #fff4dc;
+  --bad: #d03b3b;
+  --bad-soft: #fdecec;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --bg: #0d0f14;
+    --surface: #161920;
+    --surface-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #eef0f4;
+    --text-2: #b6bcc8;
+    --muted: #7d8595;
+    --brand: #818cf8;
+    --brand-2: #6366f1;
+    --brand-soft: #1f2240;
+    --brand-ink: #c7cbff;
+    --series-rent: #3987e5;
+    --series-laundry: #d95926;
+    --grid: #232833;
+    --good: #2fbf2f;
+    --good-soft: #13261a;
+    --warn: #fab219;
+    --warn-soft: #2a2210;
+    --bad: #ef6b6b;
+    --bad-soft: #2c1517;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-rent: var(--series-rent);
+  --color-laundry: var(--series-laundry);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --font-sans: var(--font-thai), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.6;
+}
+@media (prefers-color-scheme: dark) {
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
+}
+
+dialog::backdrop {
+  background: rgb(10 12 20 / 0.45);
+  backdrop-filter: blur(2px);
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.animate-pop {
+  animation: pop 0.18s ease-out;
+}
