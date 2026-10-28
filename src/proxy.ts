@@ -13,7 +13,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|icon.png|apple-icon.png|icons/|manifest.webmanifest|sw.js|offline.html).*)",
-  ],
+  // ไม่ตรวจล็อกอินกับไฟล์ static ทุกชนิด (รูป ไอคอน manifest sw.js) — ใช้ได้ทั้งหน้า login และผู้เยี่ยมชม
+  matcher: ["/((?!_next/static|_next/image|.*\\.[a-zA-Z0-9]+$).*)"],
 };
