@@ -10,7 +10,10 @@ const thai = Anuphan({
 });
 
 export const metadata: Metadata = {
-  title: { default: "Mildkcy — ระบบจัดการเช่ารถ & ซักผ้า", template: "%s · Mildkcy" },
+  title: {
+    default: "Private Paradise Resort เกาะช้าง — ระบบจัดการเช่ารถ & ซักผ้า",
+    template: "%s · Private Paradise Resort",
+  },
   description: "บันทึกการเช่ามอเตอร์ไซค์ ซักผ้า และดูสรุปรายวัน รายสัปดาห์ รายเดือน",
 };
 

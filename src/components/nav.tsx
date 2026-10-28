@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Bike, LayoutDashboard, LogOut, Settings, Shirt, CalendarCheck } from "lucide-react";
+import { Bike, LayoutDashboard, LogOut, Settings, Shirt, CalendarCheck, TreePalm } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions";
@@ -25,11 +25,11 @@ export function Sidebar({ showLogout }: { showLogout: boolean }) {
     <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface px-4 py-6 lg:flex">
       <Link href="/" className="mb-8 flex items-center gap-3 px-2">
         <div className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-brand-2 to-violet-500 text-white shadow-lg shadow-brand/30">
-          <Bike className="size-5" />
+          <TreePalm className="size-5" />
         </div>
-        <div>
-          <p className="font-bold leading-tight">Mildkcy</p>
-          <p className="text-xs text-muted">เช่ารถ · ซักผ้า</p>
+        <div className="min-w-0">
+          <p className="font-bold leading-tight">Private Paradise</p>
+          <p className="text-xs text-muted">Resort · เกาะช้าง</p>
         </div>
       </Link>
       <nav className="flex flex-1 flex-col gap-1">
