@@ -8,6 +8,7 @@ import { Button, Card, Empty, Field, Input, Modal, Segmented, Select, Textarea, 
 import { thShort } from "@/lib/dates";
 import { baht } from "@/lib/format";
 import { useAction } from "@/lib/hooks";
+import { confirmDialog } from "@/lib/confirm";
 import { BIKE_STATUSES, type Bike } from "@/lib/schema";
 
 type Stats = Record<string, { monthDays: number; monthRevenue: number; totalRevenue: number; lastDate: string }>;
@@ -206,7 +207,15 @@ function BikeForm({ bike, onClose }: { bike: Partial<Bike> | null; onClose: () =
               variant="danger"
               className="mr-auto"
               disabled={pending}
-              onClick={() => confirm(`ลบรถ ${bike.plate}?`) && run(() => deleteBike(bike.id!), "ลบรถแล้ว", onClose)}
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: "ลบรถคันนี้?",
+                  html: "ลบออกจากทะเบียนรถถาวร (รถที่มีประวัติเช่าจะลบไม่ได้)",
+                  confirmText: "ลบรถ",
+                  danger: true,
+                });
+                if (ok) run(() => deleteBike(bike.id!), "ลบรถแล้ว", onClose);
+              }}
             >
               <Trash2 className="size-4" /> ลบ
             </Button>

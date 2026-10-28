@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { PageHeader } from "@/components/nav";
+import { IllustratedHeader } from "@/components/hero";
 import { Skeleton } from "@/components/ui";
 import { getBikes, getRentals } from "@/lib/data";
 import { addDays, isISODate, startOfMonth, startOfWeek, todayISO } from "@/lib/dates";
@@ -30,7 +30,11 @@ async function RentalsData({ searchParams }: { searchParams: PageProps<"/rentals
 export default function RentalsPage({ searchParams }: PageProps<"/rentals">) {
   return (
     <>
-      <PageHeader title="บันทึกเช่ารถ" subtitle="แตะที่รถเพื่อบันทึกว่าถูกเช่าในวันนั้น ระบบคิดเงินให้อัตโนมัติ" />
+      <IllustratedHeader
+        title="บันทึกเช่ารถ"
+        subtitle="แตะที่รถเพื่อบันทึกว่าถูกเช่าในวันนั้น ระบบคิดเงินให้อัตโนมัติ"
+        image="/illustrations/scooter.svg"
+      />
       <Suspense
         fallback={
           <div className="space-y-4">

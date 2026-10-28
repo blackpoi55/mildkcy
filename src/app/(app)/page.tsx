@@ -2,14 +2,16 @@ import { AlertTriangle, ArrowDownRight, ArrowUpRight, Bike, CalendarCheck, Circl
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
+import { ResortHero } from "@/components/hero";
 import { Badge, Card, CardHeader, Empty, Skeleton } from "@/components/ui";
 import { buildDashboard, type Dashboard } from "@/lib/analytics";
 import { getBikes, getLaundry, getRentals } from "@/lib/data";
-import { isISODate, periodLabel, thShort, todayISO, type Period } from "@/lib/dates";
+import { isISODate, nowClock, nowTime, periodLabel, thShort, todayISO, type Period } from "@/lib/dates";
 import { baht, number, pctChange } from "@/lib/format";
 import { isAuthed } from "@/lib/session";
 import { MonthlyChart, Legend } from "./charts";
 import { DailyCard, DashboardControls } from "./dashboard-parts";
+import { TodayPanel } from "./today-panel";
 
 const PREV_LABEL: Record<Period, string> = { day: "เมื่อวาน", week: "สัปดาห์ก่อน", month: "เดือนก่อน" };
 
@@ -148,7 +150,7 @@ function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: 
               </div>
             )}
             {d.topBikes.length === 0 ? (
-              <Empty icon={<CalendarCheck />} title="ยังไม่มีการเช่าในช่วงนี้" />
+              <Empty icon={<CalendarCheck />} image="/illustrations/scooter.svg" title="ยังไม่มีการเช่าในช่วงนี้" />
             ) : (
               <ul className="space-y-3.5">
                 {d.topBikes.slice(0, 8).map((b) => (
@@ -192,7 +194,7 @@ function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: 
           />
           <div className="p-5">
             {d.rooms.length === 0 ? (
-              <Empty icon={<Shirt />} title="ยังไม่มีรายการซักผ้าในช่วงนี้" />
+              <Empty icon={<Shirt />} image="/illustrations/laundry.svg" title="ยังไม่มีรายการซักผ้าในช่วงนี้" />
             ) : (
               <ul className="space-y-3">
                 {d.rooms.slice(0, 10).map((r) => (
@@ -263,11 +265,42 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
   const date = isISODate(sp.d) ? sp.d : today;
   const [bikes, rentals, laundry, canEdit] = await Promise.all([getBikes(), getRentals(), getLaundry(), isAuthed()]);
   const d = buildDashboard(period, date, today, bikes, rentals, laundry);
+  const todayRentals = rentals.filter((r) => r.date === today);
+  const todayLaundry = laundry.filter((l) => l.date === today);
+  const hour = Number(nowTime().slice(0, 2));
+  const greeting = hour < 12 ? "สวัสดีตอนเช้า ☀️" : hour < 17 ? "สวัสดีตอนบ่าย 🌴" : "สวัสดีตอนเย็น 🌅";
   return (
     <>
+      <ResortHero
+        greeting={greeting}
+        dateLabel={periodLabel("day", today)}
+        stats={[
+          {
+            icon: <Bike className="size-4" />,
+            label: "รถออกวันนี้",
+            value: `${todayRentals.filter((r) => r.days > 0).length}/${d.rentable} คัน`,
+          },
+          {
+            icon: <Wallet className="size-4" />,
+            label: "รายได้วันนี้",
+            value: baht(todayRentals.reduce((s, r) => s + r.total, 0) + todayLaundry.reduce((s, l) => s + l.price, 0)),
+          },
+          { icon: <Shirt className="size-4" />, label: "ซักผ้าวันนี้", value: `${todayLaundry.length} รายการ` },
+        ]}
+      />
+      <TodayPanel
+        today={today}
+        dateLabel={periodLabel("day", today)}
+        updatedAt={nowClock()}
+        bikes={bikes}
+        rentals={todayRentals}
+        laundry={todayLaundry}
+        rentableCount={d.rentable}
+        canEdit={canEdit}
+      />
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">ภาพรวมธุรกิจ</h1>
+          <h2 className="text-xl font-bold tracking-tight sm:text-2xl">ภาพรวมธุรกิจ</h2>
           <p className="mt-1 text-sm text-muted">{d.range.label}</p>
         </div>
         <DashboardControls period={period} date={date} today={today} />
@@ -282,6 +315,7 @@ export default function DashboardPage({ searchParams }: PageProps<"/">) {
     <Suspense
       fallback={
         <div className="space-y-6">
+          <Skeleton className="h-52 sm:h-60" />
           <Skeleton className="h-12 w-72" />
           <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (

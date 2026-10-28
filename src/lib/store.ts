@@ -42,7 +42,8 @@ function normalize<T extends TableName>(table: T, raw: Record<string, unknown>):
 // ---------------------------------------------------------------------------
 
 const API = "https://sheets.googleapis.com/v4/spreadsheets";
-const CACHE_MS = 15_000;
+// อายุแคชสั้น ๆ: ลดจำนวนครั้งที่อ่าน Google Sheets แต่ข้อมูลยังสดเกือบเรียลไทม์
+const CACHE_MS = 10_000;
 
 function colLetter(n: number) {
   let s = "";

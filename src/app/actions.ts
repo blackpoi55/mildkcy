@@ -106,9 +106,12 @@ export async function deleteBike(id: string) {
 
 // ---------------------------------------------------------------- เช่ารถ
 
-/** ติ๊ก/ยกเลิก การเช่ารถ 1 คันใน 1 วัน (ใช้กับหน้าบันทึกรายวันและตารางสัปดาห์) */
+/**
+ * ติ๊ก/ยกเลิก การเช่ารถ 1 คันใน 1 วัน (ใช้กับหน้าบันทึกรายวันและตารางสัปดาห์)
+ * คืนค่ารายการที่ถูกลบ/สร้าง เพื่อให้หน้าเว็บกด "เลิกทำ" ได้
+ */
 export async function setRentalDay(input: { bikeId: string; date: string; rented: boolean; time?: string }) {
-  return guard(async () => {
+  return guard(async (): Promise<Rental[]> => {
     if (!isISODate(input.date)) throw new Error("วันที่ไม่ถูกต้อง");
     const store = getStore();
     const existing = (await store.all("rentals")).filter(
@@ -116,9 +119,9 @@ export async function setRentalDay(input: { bikeId: string; date: string; rented
     );
     if (!input.rented) {
       if (existing.length) await store.remove("rentals", existing.map((r) => r.id));
-      return;
+      return existing;
     }
-    if (existing.length) return;
+    if (existing.length) return [];
     const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
     if (!bike) throw new Error("ไม่พบรถคันนี้");
     const r: Rental = {
@@ -138,6 +141,20 @@ export async function setRentalDay(input: { bikeId: string; date: string; rented
     };
     r.total = rentalTotal(r);
     await store.insert("rentals", [r]);
+    return [r];
+  });
+}
+
+/** เลิกทำการยกเลิกเช่า: ใส่รายการเดิมกลับ (ค่าเดิมทุกช่อง รวมเวลา ลูกค้า ส่วนลด) */
+export async function restoreRentals(rows: Rental[]) {
+  return guard(async () => {
+    const store = getStore();
+    const current = await store.all("rentals");
+    const taken = new Set(current.map((r) => `${r.bikeId}|${r.date}`));
+    const back = rows
+      .filter((r) => isISODate(r.date) && !taken.has(`${r.bikeId}|${r.date}`))
+      .map((r) => ({ ...r, id: newId(), total: rentalTotal(r) }));
+    await store.insert("rentals", back);
   });
 }
 

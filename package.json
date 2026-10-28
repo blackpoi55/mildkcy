@@ -18,7 +18,8 @@
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
     "server-only": "^0.0.1",
-    "sonner": "^2.0.8"
+    "sonner": "^2.0.8",
+    "sweetalert2": "^11.26.25"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",

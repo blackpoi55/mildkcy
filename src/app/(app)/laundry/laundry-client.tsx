@@ -8,6 +8,7 @@ import { Badge, Button, Card, CardHeader, Empty, Field, Input, Modal, Segmented,
 import { laundryPriceFor as priceFor, type AppSettings } from "@/lib/laundry";
 import { nowTime, thMonth, thShort } from "@/lib/dates";
 import { baht, number } from "@/lib/format";
+import { confirmDialog } from "@/lib/confirm";
 import { useAction } from "@/lib/hooks";
 import type { Laundry } from "@/lib/schema";
 
@@ -187,7 +188,12 @@ function DayList({ items, onEdit }: { items: Laundry[]; onEdit: (l: Laundry) => 
         ))}
       </div>
       {items.length === 0 ? (
-        <Empty icon={<Shirt />} title="ยังไม่มีรายการซักผ้าวันนี้" hint="เลือกห้องและน้ำหนักทางซ้ายเพื่อบันทึก" />
+        <Empty
+          icon={<Shirt />}
+          image="/illustrations/laundry.svg"
+          title="ยังไม่มีรายการซักผ้าวันนี้"
+          hint="เลือกห้องและน้ำหนักเพื่อบันทึก"
+        />
       ) : (
         <div className="divide-y divide-line">
           {items.map((i) => (
@@ -314,7 +320,15 @@ function EditLaundry({ item, settings, onClose }: { item: Laundry | null; settin
             variant="danger"
             className="mr-auto"
             disabled={pending}
-            onClick={() => run(() => deleteLaundry(form.id), "ลบรายการแล้ว", onClose)}
+            onClick={async () => {
+              const ok = await confirmDialog({
+                title: "ลบรายการซักผ้านี้?",
+                html: `ห้อง ${form.room} · ${number(form.kg, 1)} กก. · ${baht(form.price)}`,
+                confirmText: "ลบรายการ",
+                danger: true,
+              });
+              if (ok) run(() => deleteLaundry(form.id), "ลบรายการแล้ว", onClose);
+            }}
           >
             <Trash2 className="size-4" /> ลบ
           </Button>

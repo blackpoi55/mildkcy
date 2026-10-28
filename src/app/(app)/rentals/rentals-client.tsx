@@ -3,15 +3,18 @@
 import { Check, Clock, ListChecks, Pencil, Plus, Receipt, Rows3, Table2, Trash2, User } from "lucide-react";
 import { useMemo, useOptimistic, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { deleteRental, saveRental, setRentalDay } from "@/app/actions";
+import { deleteRental, restoreRentals, saveRental, setRentalDay } from "@/app/actions";
 import { DateNav, useSetParam } from "@/components/date-nav";
 import { Badge, Button, Card, Empty, Field, Input, Modal, Segmented, Select, Textarea, cn } from "@/components/ui";
-import { TH_DAYS_SHORT, nowTime, rangeOf, thShort, type Period } from "@/lib/dates";
+import { confirmDialog } from "@/lib/confirm";
+import { TH_DAYS_SHORT, nowTime, rangeOf, thLong, thShort, type Period } from "@/lib/dates";
 import { baht } from "@/lib/format";
 import { useAction } from "@/lib/hooks";
 import { rentalTotal, type Bike, type Rental } from "@/lib/schema";
 
 export type RentalView = "day" | "week" | "list";
+
+const escapeHtml = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 type Toggle = { bike: Bike; date: string; rented: boolean };
 
@@ -57,12 +60,50 @@ export function RentalsClient({
       : state.filter((r) => !(r.bikeId === t.bike.id && r.date === t.date)),
   );
 
-  const toggle = (bike: Bike, d: string, rented: boolean) =>
+  const apply = (bike: Bike, d: string, rented: boolean, undoable = true) =>
     start(async () => {
       applyToggle({ bike, date: d, rented });
       const res = await setRentalDay({ bikeId: bike.id, date: d, rented, time: d === today ? nowTime() : "" });
-      if (!res.ok) toast.error(res.error);
+      if (!res.ok) return void toast.error(res.error);
+      const changed = res.data ?? [];
+      if (!undoable || !changed.length) return;
+      if (rented) {
+        toast.success(`บันทึกเช่า ${bike.plate} · ${thShort(d)}`, {
+          action: { label: "เลิกทำ", onClick: () => apply(bike, d, false, false) },
+        });
+      } else {
+        // เก็บรายการที่ถูกลบไว้ กด "เลิกทำ" แล้วได้ข้อมูลเดิมกลับมาครบ (เวลา ลูกค้า ส่วนลด)
+        toast(`ยกเลิกการเช่า ${bike.plate} · ${thShort(d)} แล้ว`, {
+          duration: 10_000,
+          action: {
+            label: "เลิกทำ",
+            onClick: () =>
+              start(async () => {
+                const r = await restoreRentals(changed);
+                if (r.ok) toast.success(`คืนข้อมูลเช่า ${bike.plate} แล้ว`);
+                else toast.error(r.error);
+              }),
+          },
+        });
+      }
     });
+
+  /** การยกเลิกเช่าต้องยืนยันก่อน กันเผลอกด */
+  const toggle = async (bike: Bike, d: string, rented: boolean) => {
+    if (!rented) {
+      const recs = items.filter((r) => r.bikeId === bike.id && r.date === d);
+      const time = recs.find((r) => r.time)?.time;
+      const ok = await confirmDialog({
+        title: `ยกเลิกการเช่า ${escapeHtml(bike.plate)}?`,
+        html: `${thLong(d)}${time ? ` · เวลา ${time}` : ""} · ${baht(recs.reduce((s, r) => s + r.total, 0))}<br><small>เวลา ลูกค้า ส่วนลด และค่าปรับของวันนี้จะถูกลบ</small>`,
+        confirmText: "ยกเลิกการเช่า",
+        cancelText: "ไม่ใช่ เก็บไว้",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    apply(bike, d, rented);
+  };
 
   const period: Period = view === "day" ? "day" : view === "week" ? "week" : "month";
 
@@ -160,7 +201,10 @@ function DayBoard({
                 >
                   {on ? <Check className="size-7" strokeWidth={3} /> : <Plus className="size-6" />}
                 </button>
-                <button className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => onToggle(b, date, !on)}>
+                <button
+                  className="min-w-0 flex-1 cursor-pointer text-left"
+                  onClick={() => (on ? !r.id.startsWith("tmp-") && onEdit(r) : onToggle(b, date, true))}
+                >
                   <p className="font-bold tracking-wide">{b.plate}</p>
                   <p className="truncate text-sm text-muted">
                     {b.brand} {b.model}
@@ -364,7 +408,7 @@ function MonthList({
         </Button>
       </div>
       {list.length === 0 ? (
-        <Empty icon={<Receipt />} title="ยังไม่มีรายการในเดือนนี้" />
+        <Empty icon={<Receipt />} image="/illustrations/scooter.svg" title="ยังไม่มีรายการในเดือนนี้" />
       ) : (
         <div className="divide-y divide-line">
           {list.map((r) => (
@@ -424,7 +468,15 @@ function RentalForm({ rental, bikes, onClose }: { rental: Partial<Rental> | null
               variant="danger"
               className="mr-auto"
               disabled={pending}
-              onClick={() => run(() => deleteRental(rental.id!), "ลบรายการแล้ว", onClose)}
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: "ลบรายการเช่านี้?",
+                  html: `${escapeHtml(rental.plate ?? "")} · ${rental.date ? thLong(rental.date) : ""}`,
+                  confirmText: "ลบรายการ",
+                  danger: true,
+                });
+                if (ok) run(() => deleteRental(rental.id!), "ลบรายการแล้ว", onClose);
+              }}
             >
               <Trash2 className="size-4" /> ลบ
             </Button>

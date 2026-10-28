@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { PageHeader } from "@/components/nav";
+import { IllustratedHeader } from "@/components/hero";
 import { Skeleton } from "@/components/ui";
 import { getLaundry, getSettings } from "@/lib/data";
 import { isISODate, todayISO } from "@/lib/dates";
@@ -21,7 +21,11 @@ async function LaundryData({ searchParams }: { searchParams: PageProps<"/laundry
 export default function LaundryPage({ searchParams }: PageProps<"/laundry">) {
   return (
     <>
-      <PageHeader title="ซักผ้า" subtitle="เลือกห้อง ใส่น้ำหนัก ระบบคิดราคาให้ตามตารางราคา" />
+      <IllustratedHeader
+        title="ซักผ้า"
+        subtitle="เลือกห้อง ใส่น้ำหนัก ระบบคิดราคาให้ตามตารางราคา"
+        image="/illustrations/laundry.svg"
+      />
       <Suspense
         fallback={
           <div className="grid gap-6 lg:grid-cols-[420px_1fr]">

@@ -5,6 +5,7 @@ import { BottomNav, MobileTopBar, Sidebar, type NavProps } from "@/components/na
 import { authEnabled } from "@/lib/auth";
 import { isAuthed } from "@/lib/session";
 import { sheetsConfigured } from "@/lib/store";
+import { AutoRefresh } from "./live";
 
 /** อ่านสถานะล็อกอิน (ต้องอยู่ใน Suspense เพราะอ่าน cookie) แล้วส่งให้เมนู */
 function WithAuth({ Nav }: { Nav: ComponentType<NavProps> }) {
@@ -37,6 +38,7 @@ export default function AppLayout({ children }: LayoutProps<"/">) {
         <main className="mx-auto w-full max-w-7xl px-4 pt-6 pb-28 sm:px-6 lg:px-8 lg:pt-8 lg:pb-12">{children}</main>
       </div>
       <WithAuth Nav={BottomNav} />
+      <AutoRefresh />
     </div>
   );
 }

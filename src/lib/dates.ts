@@ -8,6 +8,13 @@ export function todayISO() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
 }
 
+/** เวลาไทยแบบมีวินาที เช่น 12:58:03 (ใช้แสดงเวลาอัปเดตล่าสุด) */
+export function nowClock() {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(
+    new Date(),
+  );
+}
+
 export function nowTime() {
   return new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }).format(
     new Date(),

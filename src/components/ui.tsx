@@ -188,10 +188,15 @@ export function Modal({
   );
 }
 
-export function Empty({ icon, title, hint }: { icon: ReactNode; title: string; hint?: string }) {
+export function Empty({ icon, title, hint, image }: { icon: ReactNode; title: string; hint?: string; image?: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
-      <div className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-muted">{icon}</div>
+      {image ? (
+        // eslint-disable-next-line @next/next/no-img-element -- ภาพประกอบ SVG ขนาดเล็ก ไม่ต้องผ่าน image optimizer
+        <img src={image} alt="" className="mb-1 h-28 w-auto opacity-90" />
+      ) : (
+        <div className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-muted">{icon}</div>
+      )}
       <p className="font-medium text-ink-2">{title}</p>
       {hint && <p className="text-sm text-muted">{hint}</p>}
     </div>

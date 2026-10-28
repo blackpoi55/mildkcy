@@ -107,6 +107,31 @@ dialog::backdrop {
   backdrop-filter: blur(2px);
 }
 
+/* SweetAlert2: ใช้สี/ฟอนต์เดียวกับแอป */
+/* ใช้ !important เพราะธีมของ SweetAlert2 มี selector ที่เจาะจงกว่า */
+.swal2-container .swal2-popup.app-swal {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 1.5rem !important;
+  font-family: inherit !important;
+  padding-bottom: 1.5rem !important;
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.35) !important;
+}
+.app-swal .swal2-title {
+  color: var(--text) !important;
+  font-size: 1.25rem !important;
+}
+.app-swal .swal2-html-container {
+  color: var(--text-2) !important;
+  font-size: 0.95rem !important;
+  line-height: 1.6 !important;
+}
+.swal2-container.swal2-backdrop-show {
+  background: rgb(10 12 20 / 0.5);
+  backdrop-filter: blur(2px);
+}
+
 @keyframes pop {
   from {
     opacity: 0;

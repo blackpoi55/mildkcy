@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { PageHeader } from "@/components/nav";
+import { IllustratedHeader } from "@/components/hero";
 import { Skeleton } from "@/components/ui";
 import { getBikes, getRentals } from "@/lib/data";
 import { todayISO } from "@/lib/dates";
@@ -27,7 +27,12 @@ async function BikesData() {
 export default function BikesPage() {
   return (
     <>
-      <PageHeader title="ทะเบียนรถ" subtitle="ข้อมูลรถทุกคัน ภาษี เอกสารโอน และราคาเช่า" />
+      <IllustratedHeader
+        title="ทะเบียนรถ"
+        subtitle="ข้อมูลรถทุกคัน ภาษี เอกสารโอน และราคาเช่า"
+        image="/illustrations/scooter.svg"
+        flip
+      />
       <Suspense
         fallback={
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
