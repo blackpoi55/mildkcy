@@ -5,6 +5,7 @@ import { Bike, CalendarCheck, Download, LayoutDashboard, LogIn, LogOut, Settings
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions";
+import { ThemeButton, ThemeSwitch } from "@/components/theme";
 
 const MEMBER_LINKS = [
   { href: "/", label: "แดชบอร์ด", short: "ภาพรวม", icon: LayoutDashboard },
@@ -72,6 +73,7 @@ export function Sidebar({ authed, canLogout }: NavProps) {
           </Link>
         ))}
       </nav>
+      <ThemeSwitch className="mb-3" />
       {authed && (
         <div className="flex flex-col gap-1 border-t border-line pt-3">
           <Link href="/install" className={item(isActive("/install"))}>
@@ -103,6 +105,7 @@ export function MobileTopBar({ authed, canLogout }: NavProps) {
           <span className="truncate text-sm font-bold">Private Paradise Resort</span>
           <span className="shrink-0 text-xs text-muted max-[360px]:hidden">เกาะช้าง</span>
         </Link>
+        <ThemeButton />
         {authed && (
           <Link href="/install" className={icon} aria-label="ติดตั้งแอป">
             <Download className="size-[18px]" />

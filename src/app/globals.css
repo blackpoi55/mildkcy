@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* ธีมกำหนดด้วย data-theme บน <html> (ตั้งโดยสคริปต์ใน layout ก่อนหน้าเว็บแสดงผล) */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
   --bg: #f5f6f8;
@@ -28,30 +29,28 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --bg: #0d0f14;
-    --surface: #161920;
-    --surface-2: #1e222b;
-    --border: #2a2f3a;
-    --text: #eef0f4;
-    --text-2: #b6bcc8;
-    --muted: #7d8595;
-    --brand: #818cf8;
-    --brand-2: #6366f1;
-    --brand-soft: #1f2240;
-    --brand-ink: #c7cbff;
-    --series-rent: #3987e5;
-    --series-laundry: #d95926;
-    --grid: #232833;
-    --good: #2fbf2f;
-    --good-soft: #13261a;
-    --warn: #fab219;
-    --warn-soft: #2a2210;
-    --bad: #ef6b6b;
-    --bad-soft: #2c1517;
-    color-scheme: dark;
-  }
+:root[data-theme="dark"] {
+  --bg: #0d0f14;
+  --surface: #161920;
+  --surface-2: #1e222b;
+  --border: #2a2f3a;
+  --text: #eef0f4;
+  --text-2: #b6bcc8;
+  --muted: #7d8595;
+  --brand: #818cf8;
+  --brand-2: #6366f1;
+  --brand-soft: #1f2240;
+  --brand-ink: #c7cbff;
+  --series-rent: #3987e5;
+  --series-laundry: #d95926;
+  --grid: #232833;
+  --good: #2fbf2f;
+  --good-soft: #13261a;
+  --warn: #fab219;
+  --warn-soft: #2a2210;
+  --bad: #ef6b6b;
+  --bad-soft: #2c1517;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -104,10 +103,8 @@ body {
     background-image: url("/bg/island-blur-tall.webp");
   }
 }
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .app-bg {
-    opacity: 0.32;
-  }
+[data-theme="dark"] .app-bg {
+  opacity: 0.32;
 }
 
 .tabular {
@@ -119,11 +116,9 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
   opacity: 0.6;
 }
-@media (prefers-color-scheme: dark) {
-  input[type="date"]::-webkit-calendar-picker-indicator,
-  input[type="time"]::-webkit-calendar-picker-indicator {
-    filter: invert(1);
-  }
+[data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator,
+[data-theme="dark"] input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
 }
 
 dialog::backdrop {

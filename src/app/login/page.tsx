@@ -2,6 +2,7 @@ import { TreePalm } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { Suspense } from "react";
+import { ThemeButton } from "@/components/theme";
 import { LoginForm } from "./form";
 
 export const metadata = { title: "เข้าสู่ระบบ" };
@@ -36,7 +37,8 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="flex items-center justify-center px-4 py-10 sm:px-8">
+      <div className="relative flex items-center justify-center px-4 py-10 sm:px-8">
+        <ThemeButton className="absolute top-4 right-4" />
         <div className="w-full max-w-sm">
           <div className="mb-8 flex items-center gap-3">
             <div className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-2 to-violet-500 text-white shadow-lg shadow-brand/30">

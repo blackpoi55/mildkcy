@@ -1,8 +1,10 @@
-import { ArrowRight, Bike, CheckCircle2, Clock, Shirt, User } from "lucide-react";
+import { AlarmClock, ArrowRight, Bike, CheckCircle2, Clock, Shirt, User } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Badge, Card } from "@/components/ui";
+import { nowTime } from "@/lib/dates";
 import { baht, number } from "@/lib/format";
+import { durationText, dueText, overdueMinutes } from "@/lib/rental-status";
 import type { Bike as BikeRow, Laundry, Rental } from "@/lib/schema";
 import { LiveBadge } from "./live";
 
@@ -70,8 +72,21 @@ export function TodayPanel({
   canEdit: boolean;
 }) {
   const bikeById = new Map(bikes.map((b) => [b.id, b]));
-  const out = rentals.filter((r) => r.days > 0).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
+  const now = nowTime();
+  const rentedToday = rentals.filter((r) => r.days > 0);
+  // กำลังเช่าอยู่ = ยังไม่คืน (เรียง: เลยกำหนดก่อน แล้วตามเวลาคืน)
+  const out = rentedToday
+    .filter((r) => !r.returnTime)
+    .sort(
+      (a, b) =>
+        overdueMinutes(b, today, now) - overdueMinutes(a, today, now) ||
+        `${a.dueDate || "9"} ${a.dueTime}`.localeCompare(`${b.dueDate || "9"} ${b.dueTime}`) ||
+        (a.time || "99").localeCompare(b.time || "99"),
+    );
+  const returned = rentedToday.filter((r) => r.returnTime);
+  const lateCount = out.filter((r) => overdueMinutes(r, today, now) > 0).length;
   const outIds = new Set(out.map((r) => r.bikeId));
+  const returnedAt = new Map(returned.map((r) => [r.bikeId, r.returnTime]));
   const free = bikes.filter((b) => b.status === "เช่า" && !outIds.has(b.id));
   const rentTotal = rentals.reduce((s, r) => s + r.total, 0);
   const wash = [...laundry].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
@@ -95,18 +110,26 @@ export function TodayPanel({
         <Panel
           icon={<Bike className="size-5" />}
           tint="bg-rent/15 text-rent"
-          title="รถออกเช่า"
+          title="กำลังเช่าอยู่"
           big={`${out.length} / ${rentableCount} คัน`}
-          sub={`รายได้ ${baht(rentTotal)}`}
+          sub={
+            <>
+              เช่าวันนี้ {rentedToday.length} ครั้ง · คืนแล้ว {returned.length} · รายได้ {baht(rentTotal)}
+              {lateCount > 0 && <span className="font-semibold text-bad"> · เลยกำหนด {lateCount} คัน</span>}
+            </>
+          }
           href={canEdit ? `/rentals?d=${today}` : undefined}
           hrefLabel="บันทึกเช่ารถวันนี้"
         >
           {out.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted">ยังไม่มีรถออกเช่าวันนี้</p>
+            <p className="py-4 text-center text-sm text-muted">
+              {rentedToday.length ? "คืนรถครบทุกคันแล้ว" : "ยังไม่มีรถออกเช่าวันนี้"}
+            </p>
           ) : (
             <ul className="divide-y divide-line">
               {out.map((r) => {
                 const b = bikeById.get(r.bikeId);
+                const late = overdueMinutes(r, today, now);
                 return (
                   <li key={r.id} className="flex items-center gap-3 py-2.5">
                     <span className="flex w-14 shrink-0 items-center gap-1 text-xs font-medium text-ink-2">
@@ -124,7 +147,18 @@ export function TodayPanel({
                         )}
                       </p>
                     </div>
-                    <span className="tabular text-sm font-semibold">{baht(r.total)}</span>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="tabular text-sm font-semibold">{baht(r.total)}</span>
+                      {late > 0 ? (
+                        <Badge tone="bad">
+                          <AlarmClock className="size-3" /> เลยกำหนด {durationText(late)}
+                        </Badge>
+                      ) : (
+                        r.dueDate && (
+                          <span className="text-[11px] text-muted">คืน {dueText(r.dueDate, r.dueTime, today)}</span>
+                        )
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -151,7 +185,12 @@ export function TodayPanel({
                   className="rounded-xl border border-line bg-surface-2/60 px-2.5 py-1.5 text-xs leading-tight"
                   title={`${b.brand} ${b.model}`}
                 >
-                  <span className="block font-semibold text-ink">{b.plate}</span>
+                  <span className="block font-semibold text-ink">
+                    {b.plate}
+                    {returnedAt.get(b.id) && (
+                      <span className="ml-1 font-normal text-good">· คืน {returnedAt.get(b.id)}</span>
+                    )}
+                  </span>
                   <span className="text-muted">
                     {b.model} · {baht(b.dailyRate)}
                   </span>

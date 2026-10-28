@@ -278,7 +278,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
           {
             icon: <Bike className="size-4" />,
             label: "รถออกวันนี้",
-            value: `${todayRentals.filter((r) => r.days > 0).length}/${d.rentable} คัน`,
+            value: `${new Set(todayRentals.filter((r) => r.days > 0).map((r) => r.bikeId)).size}/${d.rentable} คัน`,
           },
           {
             icon: <Wallet className="size-4" />,

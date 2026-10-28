@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Anuphan } from "next/font/google";
-import { Toaster } from "sonner";
 import { RegisterSW } from "@/components/register-sw";
+import { ThemedToaster } from "@/components/theme";
+import { THEME_COLORS, THEME_SCRIPT } from "@/lib/theme-script";
 import "./globals.css";
 
 const thai = Anuphan({
@@ -25,8 +26,9 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#161920" },
+    // ค่าเริ่มต้นตามเครื่อง — สคริปต์ธีมจะเปลี่ยนให้ตรงกับที่ผู้ใช้เลือก
+    { media: "(prefers-color-scheme: light)", color: THEME_COLORS.light },
+    { media: "(prefers-color-scheme: dark)", color: THEME_COLORS.dark },
   ],
   // ให้เนื้อหาเต็มจอบน iPhone (เว้นขอบด้วย safe-area-inset)
   viewportFit: "cover",
@@ -34,11 +36,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="th" className={`${thai.variable} h-full antialiased`}>
+    // suppressHydrationWarning: สคริปต์ธีมใส่ data-theme/style ให้ <html> ก่อน React เข้ามา
+    <html lang="th" data-theme="light" className={`${thai.variable} h-full antialiased`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body className="min-h-full font-sans">
         <div aria-hidden className="app-bg pointer-events-none fixed inset-0 -z-10" />
         {children}
-        <Toaster position="top-center" richColors closeButton />
+        <ThemedToaster />
         <RegisterSW />
       </body>
     </html>

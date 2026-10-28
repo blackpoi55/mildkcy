@@ -29,6 +29,10 @@ export const TABLES = {
       { key: "id", label: "id" },
       { key: "date", label: "วันที่", type: "date" },
       { key: "time", label: "เวลา" },
+      { key: "dueDate", label: "กำหนดคืน (วันที่)", type: "date" },
+      { key: "dueTime", label: "กำหนดคืน (เวลา)" },
+      { key: "returnTime", label: "เวลาคืนจริง" },
+      { key: "bookingId", label: "bookingId" },
       { key: "bikeId", label: "bikeId" },
       { key: "plate", label: "ทะเบียน" },
       { key: "days", label: "จำนวนวัน", type: "number" },
@@ -88,6 +92,13 @@ export type Rental = {
   id: string;
   date: string;
   time: string;
+  /** กำหนดคืนรถ (วันที่ + เวลา) — ข้อมูลเก่าจาก Excel จะว่าง */
+  dueDate: string;
+  dueTime: string;
+  /** เวลาที่ลูกค้านำรถมาคืนจริง — ว่าง = ยังไม่คืน */
+  returnTime: string;
+  /** การเช่าครั้งเดียวกัน (หลายวัน = หลายแถว) ใช้ id ร่วมกัน; ข้อมูลเก่าว่าง */
+  bookingId: string;
   bikeId: string;
   plate: string;
   days: number;
@@ -125,6 +136,11 @@ export type RowOf<T extends TableName> = T extends "bikes"
 export const BIKE_STATUSES = ["เช่า", "Resort", "ซาเล้ง", "ซ่อม", "ซากรถ", "ขายแล้ว"] as const;
 /** สถานะที่นับว่าเป็นรถพร้อมให้เช่า (ใช้คำนวณอัตราการใช้รถ) */
 export const RENTABLE_STATUS = "เช่า";
+
+/** การเช่าครั้งนี้ (แถวเก่าที่ไม่มี bookingId ถือว่าเป็นการเช่าเดี่ยว) */
+export function bookingOf(r: Pick<Rental, "id" | "bookingId">) {
+  return r.bookingId || r.id;
+}
 
 export function rentalTotal(r: Pick<Rental, "days" | "price" | "discount" | "fine">) {
   return r.days * r.price - r.discount + r.fine;
