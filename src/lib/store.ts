@@ -11,7 +11,10 @@ export interface Store {
   all<T extends TableName>(table: T): Promise<RowOf<T>[]>;
   insert<T extends TableName>(table: T, rows: RowOf<T>[]): Promise<void>;
   update<T extends TableName>(table: T, id: string, patch: Partial<RowOf<T>>): Promise<void>;
+  updateMany<T extends TableName>(table: T, patches: { id: string; patch: Partial<RowOf<T>> }[]): Promise<void>;
   remove(table: TableName, ids: string[]): Promise<void>;
+  /** เวลาที่ดึงข้อมูลจากต้นทางล่าสุด และข้อมูลเก่าเกิน 1 นาทีหรือไม่ (เช่น โควตา Google เต็ม) */
+  syncInfo(): { at: number; stale: boolean };
 }
 
 export function newId() {
@@ -40,10 +43,20 @@ function normalize<T extends TableName>(table: T, raw: Record<string, unknown>):
 // ---------------------------------------------------------------------------
 // Google Sheets
 // ---------------------------------------------------------------------------
+// Google จำกัดการอ่าน ~60 ครั้ง/นาที (รวมทุกเครื่องที่ใช้ service account เดียวกัน) จึง:
+//  - อ่านทุกแท็บพร้อมกันในคำขอเดียว (values:batchGet)
+//  - คำขอที่มาพร้อมกันใช้ผลอ่านชุดเดียวกัน
+//  - เก็บแคช 20 วินาที, ถ้าโดนจำกัดโควตาให้ใช้ข้อมูลล่าสุดที่มีแทน (สูงสุด 10 นาที)
 
 const API = "https://sheets.googleapis.com/v4/spreadsheets";
-// อายุแคชสั้น ๆ: ลดจำนวนครั้งที่อ่าน Google Sheets แต่ข้อมูลยังสดเกือบเรียลไทม์
-const CACHE_MS = 10_000;
+const CACHE_MS = 20_000;
+const STALE_MS = 10 * 60_000;
+
+type Entry = { rows: AnyRow[]; rowNums: Map<string, number> };
+type Snapshot = { at: number; gen: number; tables: Map<TableName, Entry> };
+type ValueRange = { range: string; values?: unknown[][] };
+
+const TABLE_NAMES = Object.keys(TABLES) as TableName[];
 
 function colLetter(n: number) {
   let s = "";
@@ -51,12 +64,22 @@ function colLetter(n: number) {
   return s;
 }
 
+function statusOf(e: unknown) {
+  const err = e as { status?: number; code?: number | string; response?: { status?: number } };
+  return err?.response?.status ?? err?.status ?? (typeof err?.code === "number" ? err.code : undefined);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 class SheetsStore implements Store {
   kind = "sheets" as const;
   private client: JWT;
   private sheetIds: Map<string, number> | null = null;
   private headers = new Map<TableName, string[]>();
-  private cache = new Map<TableName, { at: number; rows: AnyRow[]; rowNums: Map<string, number> }>();
+  private snap: Snapshot | null = null;
+  private inflight: Promise<Snapshot> | null = null;
+  /** เพิ่มทุกครั้งที่เขียน — ผลอ่านที่เริ่มก่อนการเขียนจะไม่ถูกใช้ต่อ */
+  private gen = 0;
 
   constructor(
     private spreadsheetId: string,
@@ -66,77 +89,141 @@ class SheetsStore implements Store {
     this.client = new JWT({ email, key, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
   }
 
+  /** เรียก API — ถ้าโดนจำกัดโควตา (429) รอแล้วลองใหม่ 2 ครั้ง */
   private async req<R = unknown>(url: string, method = "GET", data?: unknown): Promise<R> {
-    const res = await this.client.request<R>({ url: `${API}/${this.spreadsheetId}${url}`, method, data });
-    return res.data;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        if (process.env.NODE_ENV === "development") console.log(`[sheets] ${method} ${decodeURIComponent(url).slice(0, 70)}`);
+        const res = await this.client.request<R>({ url: `${API}/${this.spreadsheetId}${url}`, method, data });
+        return res.data;
+      } catch (e) {
+        if (statusOf(e) !== 429 || attempt >= 2) throw e;
+        await sleep(1500 * (attempt + 1));
+      }
+    }
   }
 
-  private range(table: TableName, a1: string) {
-    return encodeURIComponent(`'${TABLES[table].sheet}'!${a1}`);
+  private a1(table: TableName, a1: string) {
+    return `'${TABLES[table].sheet}'!${a1}`;
   }
 
-  /** สร้างแท็บ + หัวคอลัมน์ให้อัตโนมัติถ้ายังไม่มี */
-  private async ensure(table: TableName) {
-    if (this.headers.has(table)) return;
-    const def = TABLES[table];
+  private async loadSheetIds() {
     if (!this.sheetIds) {
       const meta = await this.req<{ sheets: { properties: { title: string; sheetId: number } }[] }>(
         "?fields=sheets.properties(title,sheetId)",
       );
       this.sheetIds = new Map(meta.sheets.map((s) => [s.properties.title, s.properties.sheetId]));
     }
-    if (!this.sheetIds.has(def.sheet)) {
-      const r = await this.req<{ replies: { addSheet: { properties: { sheetId: number } } }[] }>(
-        ":batchUpdate",
-        "POST",
-        {
-          requests: [
-            {
-              addSheet: {
-                properties: { title: def.sheet, gridProperties: { frozenRowCount: 1 } },
-              },
-            },
-          ],
-        },
-      );
-      this.sheetIds.set(def.sheet, r.replies[0].addSheet.properties.sheetId);
-    }
-    const head = await this.req<{ values?: unknown[][] }>(`/values/${this.range(table, "1:1")}`);
-    let labels = (head.values?.[0] ?? []).map(String);
-    const missing = def.columns.filter((c) => !labels.includes(c.label)).map((c) => c.label);
-    if (missing.length) {
-      labels = [...labels, ...missing];
-      await this.req(`/values/${this.range(table, "A1")}?valueInputOption=RAW`, "PUT", { values: [labels] });
-    }
-    this.headers.set(table, labels);
+    return this.sheetIds;
   }
 
-  private async load(table: TableName, fresh = false) {
-    const hit = this.cache.get(table);
-    if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit;
-    await this.ensure(table);
-    const labels = this.headers.get(table)!;
-    const res = await this.req<{ values?: unknown[][] }>(
-      `/values/${this.range(table, `A2:${colLetter(labels.length - 1)}`)}?valueRenderOption=UNFORMATTED_VALUE`,
+  /** สร้างแท็บที่ยังไม่มี (ครั้งแรกที่ใช้งานกับชีตเปล่า) */
+  private async createMissingSheets() {
+    const ids = await this.loadSheetIds();
+    const missing = TABLE_NAMES.filter((t) => !ids.has(TABLES[t].sheet));
+    if (!missing.length) return;
+    const r = await this.req<{ replies: { addSheet: { properties: { sheetId: number; title: string } } }[] }>(
+      ":batchUpdate",
+      "POST",
+      {
+        requests: missing.map((t) => ({
+          addSheet: { properties: { title: TABLES[t].sheet, gridProperties: { frozenRowCount: 1 } } },
+        })),
+      },
     );
-    const cols = TABLES[table].columns;
-    const idx = cols.map((c) => labels.indexOf(c.label));
-    const rows: AnyRow[] = [];
-    const rowNums = new Map<string, number>();
-    (res.values ?? []).forEach((vals, i) => {
-      const raw: Record<string, unknown> = {};
-      cols.forEach((c, j) => (raw[c.key] = vals[idx[j]]));
-      if (!raw.id) return;
-      rows.push(normalize(table, raw) as AnyRow);
-      rowNums.set(String(raw.id), i + 2);
-    });
-    const entry = { at: Date.now(), rows, rowNums };
-    this.cache.set(table, entry);
-    return entry;
+    for (const rep of r.replies) ids.set(rep.addSheet.properties.title, rep.addSheet.properties.sheetId);
   }
 
-  private toValues(table: TableName, row: Record<string, unknown>) {
-    const labels = this.headers.get(table)!;
+  private async fetchSnapshot(gen: number): Promise<Snapshot> {
+    const qs = TABLE_NAMES.map((t) => `ranges=${encodeURIComponent(this.a1(t, "A1:Z"))}`).join("&");
+    const url = `/values:batchGet?${qs}&valueRenderOption=UNFORMATTED_VALUE`;
+    let res: { valueRanges: ValueRange[] };
+    try {
+      res = await this.req(url);
+    } catch (e) {
+      if (statusOf(e) !== 400) throw e; // 400 = มีแท็บที่ยังไม่ได้สร้าง
+      await this.createMissingSheets();
+      res = await this.req(url);
+    }
+
+    const tables = new Map<TableName, Entry>();
+    for (const [i, table] of TABLE_NAMES.entries()) {
+      const values = res.valueRanges[i]?.values ?? [];
+      let labels = (values[0] ?? []).map(String);
+      // เพิ่มหัวคอลัมน์ที่ยังไม่มี (เช่น ฟีเจอร์ใหม่) ต่อท้ายให้อัตโนมัติ
+      const missing = TABLES[table].columns.filter((c) => !labels.includes(c.label)).map((c) => c.label);
+      if (missing.length) {
+        labels = [...labels, ...missing];
+        await this.req(`/values/${encodeURIComponent(this.a1(table, "A1"))}?valueInputOption=RAW`, "PUT", {
+          values: [labels],
+        });
+      }
+      this.headers.set(table, labels);
+
+      const cols = TABLES[table].columns;
+      const idx = cols.map((c) => labels.indexOf(c.label));
+      const rows: AnyRow[] = [];
+      const rowNums = new Map<string, number>();
+      values.slice(1).forEach((vals, j) => {
+        const raw: Record<string, unknown> = {};
+        cols.forEach((c, k) => (raw[c.key] = vals[idx[k]]));
+        if (!raw.id) return;
+        rows.push(normalize(table, raw) as AnyRow);
+        rowNums.set(String(raw.id), j + 2);
+      });
+      tables.set(table, { rows, rowNums });
+    }
+    return { at: Date.now(), gen, tables };
+  }
+
+  /** ข้อมูลทุกแท็บ (fresh = ต้องการล่าสุดจริง ๆ ก่อนแก้ไข/ลบ) */
+  private async snapshot(fresh = false): Promise<Snapshot> {
+    const s = this.snap;
+    if (!fresh && s && s.gen === this.gen && Date.now() - s.at < CACHE_MS) return s;
+    if (this.inflight) {
+      const p = await this.inflight;
+      if (p.gen === this.gen && (!fresh || Date.now() - p.at < 2_000)) return p;
+    }
+    const gen = this.gen;
+    const p = this.fetchSnapshot(gen)
+      .then((snap) => {
+        if (snap.gen === this.gen) this.snap = snap;
+        return snap;
+      })
+      .catch((e) => {
+        // อ่านไม่ได้ (โควตาเต็ม / เน็ตหลุด) → ใช้ข้อมูลล่าสุดที่มี ถ้ายังไม่เก่าเกินไป และไม่ใช่การเตรียมแก้ไข
+        if (!fresh && this.snap && Date.now() - this.snap.at < STALE_MS) {
+          console.warn("[sheets] ใช้ข้อมูลในแคชแทน:", e instanceof Error ? e.message : e);
+          return this.snap;
+        }
+        if (statusOf(e) === 429) {
+          throw new Error("Google Sheets ถูกเรียกใช้ถี่เกินไป กรุณารอประมาณ 1 นาทีแล้วลองใหม่");
+        }
+        throw e;
+      })
+      .finally(() => {
+        if (this.inflight === p) this.inflight = null;
+      });
+    this.inflight = p;
+    return p;
+  }
+
+  private invalidate() {
+    this.gen++;
+    this.snap = null;
+  }
+
+  syncInfo() {
+    const at = this.snap?.at ?? Date.now();
+    return { at, stale: Date.now() - at > 60_000 };
+  }
+
+  private async labels(table: TableName) {
+    if (!this.headers.has(table)) await this.snapshot();
+    return this.headers.get(table)!;
+  }
+
+  private toValues(labels: string[], table: TableName, row: Record<string, unknown>) {
     const cols = TABLES[table].columns;
     return labels.map((l) => {
       const c = cols.find((x) => x.label === l);
@@ -146,49 +233,55 @@ class SheetsStore implements Store {
   }
 
   async all<T extends TableName>(table: T) {
-    return (await this.load(table)).rows as RowOf<T>[];
+    return (await this.snapshot()).tables.get(table)!.rows as RowOf<T>[];
   }
 
   async insert<T extends TableName>(table: T, rows: RowOf<T>[]) {
     if (!rows.length) return;
-    await this.ensure(table);
+    const labels = await this.labels(table);
     await this.req(
-      `/values/${this.range(table, "A1")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      `/values/${encodeURIComponent(this.a1(table, "A1"))}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
       "POST",
-      { values: rows.map((r) => this.toValues(table, r as Record<string, unknown>)) },
+      { values: rows.map((r) => this.toValues(labels, table, r as Record<string, unknown>)) },
     );
-    this.cache.delete(table);
+    this.invalidate();
   }
 
   async update<T extends TableName>(table: T, id: string, patch: Partial<RowOf<T>>) {
-    const { rows, rowNums } = await this.load(table, true);
-    const n = rowNums.get(id);
-    const cur = rows.find((r) => r.id === id);
-    if (!n || !cur) throw new Error("ไม่พบข้อมูลที่ต้องการแก้ไข (อาจถูกลบไปแล้ว)");
-    const next = normalize(table, { ...cur, ...patch, id });
+    await this.updateMany(table, [{ id, patch }]);
+  }
+
+  /** แก้หลายแถวในคำขอเดียว */
+  async updateMany<T extends TableName>(table: T, patches: { id: string; patch: Partial<RowOf<T>> }[]) {
+    if (!patches.length) return;
+    const { rows, rowNums } = (await this.snapshot(true)).tables.get(table)!;
     const labels = this.headers.get(table)!;
-    await this.req(
-      `/values/${this.range(table, `A${n}:${colLetter(labels.length - 1)}${n}`)}?valueInputOption=RAW`,
-      "PUT",
-      { values: [this.toValues(table, next as Record<string, unknown>)] },
-    );
-    this.cache.delete(table);
+    const last = colLetter(labels.length - 1);
+    const data = patches.map(({ id, patch }) => {
+      const n = rowNums.get(id);
+      const cur = rows.find((r) => r.id === id);
+      if (!n || !cur) throw new Error("ไม่พบข้อมูลที่ต้องการแก้ไข (อาจถูกลบไปแล้ว)");
+      const next = normalize(table, { ...cur, ...patch, id });
+      return { range: this.a1(table, `A${n}:${last}${n}`), values: [this.toValues(labels, table, next as Record<string, unknown>)] };
+    });
+    await this.req("/values:batchUpdate", "POST", { valueInputOption: "RAW", data });
+    this.invalidate();
   }
 
   async remove(table: TableName, ids: string[]) {
-    const { rowNums } = await this.load(table, true);
+    const { rowNums } = (await this.snapshot(true)).tables.get(table)!;
     const nums = ids
       .map((id) => rowNums.get(id))
       .filter((n): n is number => !!n)
       .sort((a, b) => b - a);
     if (!nums.length) return;
-    const sheetId = this.sheetIds!.get(TABLES[table].sheet)!;
+    const sheetId = (await this.loadSheetIds()).get(TABLES[table].sheet)!;
     await this.req(":batchUpdate", "POST", {
       requests: nums.map((n) => ({
         deleteDimension: { range: { sheetId, dimension: "ROWS", startIndex: n - 1, endIndex: n } },
       })),
     });
-    this.cache.delete(table);
+    this.invalidate();
   }
 }
 
@@ -198,6 +291,9 @@ class SheetsStore implements Store {
 
 class LocalStore implements Store {
   kind = "local" as const;
+  syncInfo() {
+    return { at: Date.now(), stale: false };
+  }
   private file = path.join(process.cwd(), ".data", "db.json");
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -243,6 +339,17 @@ class LocalStore implements Store {
       const i = list.findIndex((r) => r.id === id);
       if (i < 0) throw new Error("ไม่พบข้อมูลที่ต้องการแก้ไข (อาจถูกลบไปแล้ว)");
       list[i] = { ...list[i], ...patch, id } as AnyRow;
+    });
+  }
+
+  updateMany<T extends TableName>(table: T, patches: { id: string; patch: Partial<RowOf<T>> }[]) {
+    return this.mutate((db) => {
+      const list = db[table] ?? [];
+      for (const { id, patch } of patches) {
+        const i = list.findIndex((r) => r.id === id);
+        if (i < 0) throw new Error("ไม่พบข้อมูลที่ต้องการแก้ไข (อาจถูกลบไปแล้ว)");
+        list[i] = { ...list[i], ...patch, id } as AnyRow;
+      }
     });
   }
 

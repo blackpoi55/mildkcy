@@ -2,13 +2,16 @@ import { AlertTriangle, ArrowDownRight, ArrowUpRight, Bike, CalendarCheck, Circl
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
+import { DueSoon } from "@/components/due-soon";
 import { ResortHero } from "@/components/hero";
 import { Badge, Card, CardHeader, Empty, Skeleton } from "@/components/ui";
 import { buildDashboard, type Dashboard } from "@/lib/analytics";
 import { getBikes, getLaundry, getRentals } from "@/lib/data";
 import { isISODate, nowClock, nowTime, periodLabel, thShort, todayISO, type Period } from "@/lib/dates";
 import { baht, number, pctChange } from "@/lib/format";
+import { dueSoonList } from "@/lib/rental-status";
 import { isAuthed } from "@/lib/session";
+import { getStore } from "@/lib/store";
 import { MonthlyChart, Legend } from "./charts";
 import { DailyCard, DashboardControls } from "./dashboard-parts";
 import { TodayPanel } from "./today-panel";
@@ -265,6 +268,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
   const date = isISODate(sp.d) ? sp.d : today;
   const [bikes, rentals, laundry, canEdit] = await Promise.all([getBikes(), getRentals(), getLaundry(), isAuthed()]);
   const d = buildDashboard(period, date, today, bikes, rentals, laundry);
+  const sync = getStore().syncInfo();
   const todayRentals = rentals.filter((r) => r.date === today);
   const todayLaundry = laundry.filter((l) => l.date === today);
   const hour = Number(nowTime().slice(0, 2));
@@ -288,10 +292,18 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
           { icon: <Shirt className="size-4" />, label: "ซักผ้าวันนี้", value: `${todayLaundry.length} รายการ` },
         ]}
       />
+      <DueSoon
+        items={dueSoonList(rentals, today, nowTime())}
+        bikes={bikes}
+        today={today}
+        showCustomer={canEdit}
+        href={canEdit ? `/rentals?d=${today}` : undefined}
+      />
       <TodayPanel
         today={today}
         dateLabel={periodLabel("day", today)}
-        updatedAt={nowClock()}
+        updatedAt={nowClock(sync.at)}
+        stale={sync.stale}
         bikes={bikes}
         rentals={todayRentals}
         laundry={todayLaundry}

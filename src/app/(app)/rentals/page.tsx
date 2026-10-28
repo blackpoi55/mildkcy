@@ -3,7 +3,9 @@ import { Suspense } from "react";
 import { IllustratedHeader } from "@/components/hero";
 import { Skeleton } from "@/components/ui";
 import { getBikes, getRentals } from "@/lib/data";
-import { addDays, isISODate, startOfMonth, startOfWeek, todayISO } from "@/lib/dates";
+import { DueSoon } from "@/components/due-soon";
+import { addDays, isISODate, nowTime, startOfMonth, startOfWeek, todayISO } from "@/lib/dates";
+import { dueSoonList } from "@/lib/rental-status";
 import { RENTABLE_STATUS } from "@/lib/schema";
 import { RentalsClient, type RentalView } from "./rentals-client";
 
@@ -24,7 +26,12 @@ async function RentalsData({ searchParams }: { searchParams: PageProps<"/rentals
   const usedBikeIds = new Set(inRange.map((r) => r.bikeId));
   const visibleBikes = bikes.filter((b) => b.status === RENTABLE_STATUS || usedBikeIds.has(b.id));
 
-  return <RentalsClient bikes={visibleBikes} allBikes={bikes} rentals={inRange} date={date} today={today} view={view} />;
+  return (
+    <>
+      <DueSoon items={dueSoonList(rentals, today, nowTime())} bikes={bikes} today={today} showCustomer />
+      <RentalsClient bikes={visibleBikes} allBikes={bikes} rentals={inRange} date={date} today={today} view={view} />
+    </>
+  );
 }
 
 export default function RentalsPage({ searchParams }: PageProps<"/rentals">) {

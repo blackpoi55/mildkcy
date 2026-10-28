@@ -36,3 +36,23 @@ export function durationText(min: number) {
   if (h) return `${h} ชม.${m ? ` ${m} นาที` : ""}`;
   return `${m} นาที`;
 }
+
+export type DueItem = { rental: Rental; left: number };
+
+/**
+ * รถที่ยังไม่คืนและใกล้ถึง/เลยกำหนดคืน (ภายใน withinMin นาที) — 1 รายการต่อการเช่า
+ * เรียงจากเลยกำหนดนานสุด → ใกล้ถึงเวลาที่สุด
+ */
+export function dueSoonList(rentals: Rental[], today: string, now: string, withinMin = 24 * 60): DueItem[] {
+  const latest = new Map<string, Rental>();
+  for (const r of rentals) {
+    if (r.returnTime || !r.dueDate || r.days <= 0 || r.date > today) continue;
+    const key = `${r.bikeId}|${r.bookingId || r.id}`;
+    const cur = latest.get(key);
+    if (!cur || r.date > cur.date) latest.set(key, r);
+  }
+  return [...latest.values()]
+    .map((rental) => ({ rental, left: minutesUntilDue(rental, today, now) ?? Infinity }))
+    .filter((x) => x.left <= withinMin)
+    .sort((a, b) => a.left - b.left);
+}

@@ -56,6 +56,7 @@ export function TodayPanel({
   today,
   dateLabel,
   updatedAt,
+  stale,
   bikes,
   rentals,
   laundry,
@@ -65,6 +66,7 @@ export function TodayPanel({
   today: string;
   dateLabel: string;
   updatedAt: string;
+  stale?: boolean;
   bikes: BikeRow[];
   rentals: Rental[];
   laundry: Laundry[];
@@ -103,7 +105,7 @@ export function TodayPanel({
             {dateLabel} · รายได้รวม <b className="tabular text-ink">{baht(rentTotal + washTotal)}</b>
           </p>
         </div>
-        <LiveBadge updatedAt={updatedAt} />
+        <LiveBadge updatedAt={updatedAt} stale={stale} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

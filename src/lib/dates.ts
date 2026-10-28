@@ -9,9 +9,9 @@ export function todayISO() {
 }
 
 /** เวลาไทยแบบมีวินาที เช่น 12:58:03 (ใช้แสดงเวลาอัปเดตล่าสุด) */
-export function nowClock() {
+export function nowClock(at: number | Date = new Date()) {
   return new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(
-    new Date(),
+    at,
   );
 }
 

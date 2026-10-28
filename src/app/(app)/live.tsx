@@ -3,10 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore } from "react";
 
-const REFRESH_MS = 15_000;
+// 30 วินาที: ข้อมูลยังสด และไม่เปลือง โควตาอ่าน Google Sheets (~60 ครั้ง/นาที)
+const REFRESH_MS = 30_000;
 
 /**
- * ดึงข้อมูลใหม่จากเซิร์ฟเวอร์ทุก 15 วินาที (และทันทีเมื่อกลับมาที่แอป)
+ * ดึงข้อมูลใหม่จากเซิร์ฟเวอร์ทุก 30 วินาที (และทันทีเมื่อกลับมาที่แอป)
  * ข้ามรอบที่ผู้ใช้กำลังพิมพ์หรือเปิดหน้าต่างแก้ไขอยู่ จะได้ไม่รบกวน
  */
 export function AutoRefresh() {
@@ -42,7 +43,7 @@ function subscribeOnline(cb: () => void) {
 }
 
 /** ป้ายสถานะ "สด" + เวลาที่ดึงข้อมูลล่าสุด */
-export function LiveBadge({ updatedAt }: { updatedAt: string }) {
+export function LiveBadge({ updatedAt, stale }: { updatedAt: string; stale?: boolean }) {
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   return (
     <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-ink-2">
@@ -50,7 +51,8 @@ export function LiveBadge({ updatedAt }: { updatedAt: string }) {
         {online && <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-60" />}
         <span className={`relative inline-flex size-2.5 rounded-full ${online ? "bg-good" : "bg-muted"}`} />
       </span>
-      {online ? "อัปเดตอัตโนมัติ" : "ออฟไลน์"} · ล่าสุด <span className="tabular font-medium text-ink">{updatedAt}</span>
+      {online ? "อัปเดตอัตโนมัติ" : "ออฟไลน์"} · ข้อมูล ณ <span className="tabular font-medium text-ink">{updatedAt}</span>
+      {stale && <span className="rounded-full bg-warn-soft px-2 py-0.5 font-medium text-warn">ข้อมูลอาจไม่ล่าสุด</span>}
     </span>
   );
 }

@@ -88,7 +88,7 @@ export async function saveBike(input: Partial<Bike>) {
       const old = bikes.find((b) => b.id === input.id);
       if (old && old.plate !== plate) {
         const rentals = (await store.all("rentals")).filter((r) => r.bikeId === input.id);
-        for (const r of rentals) await store.update("rentals", r.id, { plate });
+        await store.updateMany("rentals", rentals.map((r) => ({ id: r.id, patch: { plate } })));
       }
     } else {
       await store.insert("bikes", [row]);
@@ -233,9 +233,10 @@ export async function setReturned(id: string, time: string | null, removeFuture 
     const booking = all.filter((r) => r.bikeId === row.bikeId && bookingOf(r) === bookingOf(row));
     const removed = t && removeFuture ? booking.filter((r) => r.date > row.date) : [];
     if (removed.length) await store.remove("rentals", removed.map((r) => r.id));
-    for (const r of booking) {
-      if (!removed.includes(r) && r.returnTime !== t) await store.update("rentals", r.id, { returnTime: t });
-    }
+    await store.updateMany(
+      "rentals",
+      booking.filter((r) => !removed.includes(r) && r.returnTime !== t).map((r) => ({ id: r.id, patch: { returnTime: t } })),
+    );
     return { time: t, removed };
   });
 }
@@ -348,7 +349,7 @@ export async function restoreLaundry(rows: Laundry[]) {
 
 export async function setLaundryPaid(ids: string[], paid: boolean) {
   return guard(async () => {
-    for (const id of ids) await getStore().update("laundry", id, { paid });
+    await getStore().updateMany("laundry", ids.map((id) => ({ id, patch: { paid } })));
   });
 }
 
@@ -368,10 +369,14 @@ export async function saveSettings(input: { laundryRate?: number; laundryPrices?
       entries.push(["laundryPrices", JSON.stringify(clean)]);
     }
     if (input.rooms) entries.push(["rooms", input.rooms.map(str).filter(Boolean).join(",")]);
-    for (const [id, value] of entries) {
-      if (existing.has(id)) await store.update("settings", id, { value });
-      else await store.insert("settings", [{ id, value }]);
-    }
+    await store.updateMany(
+      "settings",
+      entries.filter(([id]) => existing.has(id)).map(([id, value]) => ({ id, patch: { value } })),
+    );
+    await store.insert(
+      "settings",
+      entries.filter(([id]) => !existing.has(id)).map(([id, value]) => ({ id, value })),
+    );
   });
 }
 
