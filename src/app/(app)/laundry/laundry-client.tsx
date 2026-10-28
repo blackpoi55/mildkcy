@@ -300,7 +300,7 @@ function RoomSummary({ items, rooms }: { items: Laundry[]; rooms: string[] }) {
   );
 }
 
-function EditLaundry({ item, settings, onClose }: { item: Laundry | null; settings: AppSettings; onClose: () => void }) {
+export function EditLaundry({ item, settings, onClose }: { item: Laundry | null; settings: AppSettings; onClose: () => void }) {
   const { pending, run } = useAction();
   const [form, setForm] = useState<Laundry | null>(null);
   const [last, setLast] = useState(item);

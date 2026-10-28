@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Bike, CalendarCheck, Download, LayoutDashboard, LogIn, LogOut, Settings, Shirt, TreePalm } from "lucide-react";
+import { Bike, CalendarCheck, ClipboardList, Download, LayoutDashboard, LogIn, LogOut, Settings, Shirt, TreePalm } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions";
@@ -11,9 +11,12 @@ const MEMBER_LINKS = [
   { href: "/", label: "แดชบอร์ด", short: "ภาพรวม", icon: LayoutDashboard },
   { href: "/rentals", label: "บันทึกเช่ารถ", short: "เช่ารถ", icon: CalendarCheck },
   { href: "/laundry", label: "ซักผ้า", short: "ซักผ้า", icon: Shirt },
+  { href: "/records", label: "รายการทั้งหมด", short: "รายการ", icon: ClipboardList },
   { href: "/bikes", label: "ทะเบียนรถ", short: "รถ", icon: Bike },
   { href: "/settings", label: "ตั้งค่า", short: "ตั้งค่า", icon: Settings },
 ];
+/** แถบล่างบนมือถือมีที่ 5 ปุ่ม — ตั้งค่าย้ายไปเป็นไอคอนเฟืองที่แถบบน */
+const MOBILE_HIDDEN = new Set(["/settings"]);
 
 // ผู้ที่ยังไม่ล็อกอินเห็นแค่แดชบอร์ด (อ่านอย่างเดียว)
 const GUEST_LINKS = [
@@ -102,10 +105,17 @@ export function MobileTopBar({ authed, canLogout }: NavProps) {
       <div className="flex items-center gap-2.5 px-4 py-2.5">
         <Link href="/" className="flex min-w-0 flex-1 items-center gap-2.5">
           <Logo size="sm" />
-          <span className="truncate text-sm font-bold">Private Paradise Resort</span>
-          <span className="shrink-0 text-xs text-muted max-[360px]:hidden">เกาะช้าง</span>
+          <span className="truncate text-sm font-bold">
+            Private Paradise<span className="max-sm:hidden"> Resort</span>
+          </span>
+          <span className="shrink-0 text-xs text-muted max-sm:hidden">เกาะช้าง</span>
         </Link>
         <ThemeButton />
+        {authed && (
+          <Link href="/settings" className={icon} aria-label="ตั้งค่า">
+            <Settings className="size-[18px]" />
+          </Link>
+        )}
         {authed && (
           <Link href="/install" className={icon} aria-label="ติดตั้งแอป">
             <Download className="size-[18px]" />
@@ -130,7 +140,7 @@ export function MobileTopBar({ authed, canLogout }: NavProps) {
 
 export function BottomNav({ authed }: NavProps) {
   const isActive = useActive();
-  const links = linksFor(authed);
+  const links = linksFor(authed).filter((l) => !MOBILE_HIDDEN.has(l.href));
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg lg:hidden">
       <div className="mx-auto grid max-w-lg" style={{ gridTemplateColumns: `repeat(${links.length}, minmax(0, 1fr))` }}>

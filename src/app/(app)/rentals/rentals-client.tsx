@@ -643,7 +643,7 @@ function MonthList({
 
 // ---------------------------------------------------------------- ฟอร์ม
 
-function RentalForm({ rental, bikes, onClose }: { rental: Partial<Rental> | null; bikes: Bike[]; onClose: () => void }) {
+export function RentalForm({ rental, bikes, onClose }: { rental: Partial<Rental> | null; bikes: Bike[]; onClose: () => void }) {
   const { pending, run } = useAction();
   const [form, setForm] = useState<Partial<Rental>>({});
   const [last, setLast] = useState(rental);

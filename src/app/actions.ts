@@ -245,9 +245,11 @@ export async function restoreRentals(rows: Rental[]) {
   return guard(async () => {
     const store = getStore();
     const current = await store.all("rentals");
-    const taken = new Set(current.map((r) => `${r.bikeId}|${r.date}`));
+    // กันใส่ซ้ำ: เทียบทั้งรถ วัน เวลา และเวลาที่สร้าง (วันเดียวเช่าได้หลายรอบ)
+    const sig = (r: Rental) => `${r.bikeId}|${r.date}|${r.time}|${r.createdAt}`;
+    const taken = new Set(current.map(sig));
     const back = rows
-      .filter((r) => isISODate(r.date) && !taken.has(`${r.bikeId}|${r.date}`))
+      .filter((r) => isISODate(r.date) && !taken.has(sig(r)))
       .map((r) => ({ ...r, id: newId(), total: rentalTotal(r) }));
     await store.insert("rentals", back);
   });
@@ -321,6 +323,27 @@ export async function saveLaundry(input: Partial<Laundry>) {
 
 export async function deleteLaundry(id: string) {
   return guard(() => getStore().remove("laundry", [id]));
+}
+
+/** ลบหลายรายการ (หน้ารายการทั้งหมด) — คืนรายการที่ลบไว้ให้กดเลิกทำได้ */
+export async function deleteLaundryMany(ids: string[]) {
+  return guard(async () => {
+    const rows = (await getStore().all("laundry")).filter((l) => ids.includes(l.id));
+    await getStore().remove("laundry", ids);
+    return rows;
+  });
+}
+
+export async function restoreLaundry(rows: Laundry[]) {
+  return guard(async () => {
+    const store = getStore();
+    const sig = (l: Laundry) => `${l.room}|${l.date}|${l.time}|${l.createdAt}`;
+    const taken = new Set((await store.all("laundry")).map(sig));
+    await store.insert(
+      "laundry",
+      rows.filter((l) => isISODate(l.date) && !taken.has(sig(l))).map((l) => ({ ...l, id: newId() })),
+    );
+  });
 }
 
 export async function setLaundryPaid(ids: string[], paid: boolean) {
