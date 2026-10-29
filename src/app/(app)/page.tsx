@@ -9,7 +9,7 @@ import { buildDashboard, type Dashboard } from "@/lib/analytics";
 import { getBikes, getLaundry, getRentals } from "@/lib/data";
 import { isISODate, nowClock, nowTime, periodLabel, thShort, todayISO, type Period } from "@/lib/dates";
 import { baht, number, pctChange } from "@/lib/format";
-import { dueSoonList } from "@/lib/rental-status";
+import { coversDay, dueSoonList } from "@/lib/rental-status";
 import { isAuthed } from "@/lib/session";
 import { getStore } from "@/lib/store";
 import { MonthlyChart, Legend } from "./charts";
@@ -269,7 +269,8 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
   const [bikes, rentals, laundry, canEdit] = await Promise.all([getBikes(), getRentals(), getLaundry(), isAuthed()]);
   const d = buildDashboard(period, date, today, bikes, rentals, laundry);
   const sync = getStore().syncInfo();
-  const todayRentals = rentals.filter((r) => r.date === today);
+  // การเช่าที่รถออกไปวันนี้ (รวมเช่าหลายวันที่เริ่มก่อนหน้า) — รายได้นับเฉพาะที่เริ่มวันนี้
+  const todayRentals = rentals.filter((r) => coversDay(r, today, today));
   const todayLaundry = laundry.filter((l) => l.date === today);
   const hour = Number(nowTime().slice(0, 2));
   const greeting = hour < 12 ? "สวัสดีตอนเช้า ☀️" : hour < 17 ? "สวัสดีตอนบ่าย 🌴" : "สวัสดีตอนเย็น 🌅";
@@ -287,7 +288,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
           {
             icon: <Wallet className="size-4" />,
             label: "รายได้วันนี้",
-            value: baht(todayRentals.reduce((s, r) => s + r.total, 0) + todayLaundry.reduce((s, l) => s + l.price, 0)),
+            value: baht(todayRentals.filter((r) => r.date === today).reduce((s, r) => s + r.total, 0) + todayLaundry.reduce((s, l) => s + l.price, 0)),
           },
           { icon: <Shirt className="size-4" />, label: "ซักผ้าวันนี้", value: `${todayLaundry.length} รายการ` },
         ]}
@@ -297,7 +298,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
         bikes={bikes}
         today={today}
         showCustomer={canEdit}
-        href={canEdit ? `/rentals?d=${today}` : undefined}
+        href={canEdit ? "/rentals?mode=return" : undefined}
       />
       <TodayPanel
         today={today}

@@ -8,7 +8,8 @@ import { redirect } from "next/navigation";
 import { AUTH_COOKIE, authToken, isValidToken } from "@/lib/auth";
 import { getSettings } from "@/lib/data";
 import type { LaundryPrice } from "@/lib/laundry";
-import { addDays, diffDays, isISODate, nowTime } from "@/lib/dates";
+import { addDays, diffDays, isISODate, nowTime, todayISO } from "@/lib/dates";
+import { lastDayOut, planDay, resized } from "@/lib/rental-status";
 import { bookingOf, rentalTotal, type Bike, type Laundry, type Rental } from "@/lib/schema";
 import { getStore, newId } from "@/lib/store";
 
@@ -115,6 +116,7 @@ function newRental(bike: Bike, fields: Partial<Rental> & { date: string }): Rent
     time: str(fields.time),
     dueDate: str(fields.dueDate),
     dueTime: str(fields.dueTime),
+    returnDate: "",
     returnTime: "",
     bookingId: fields.bookingId || newId(),
     bikeId: bike.id,
@@ -132,50 +134,48 @@ function newRental(bike: Bike, fields: Partial<Rental> & { date: string }): Rent
   return r;
 }
 
+/** สิ่งที่เปลี่ยนไป เพื่อให้หน้าเว็บกด "เลิกทำ" ได้ */
+export type RentalChange = { created: Rental[]; removed: Rental[]; before: Rental | null };
+
 /**
- * ติ๊ก/ยกเลิก การเช่ารถ 1 คันใน 1 วัน (ตารางสัปดาห์ / ยกเลิกในหน้ารายวัน)
- * ถ้าเมื่อวานรถคันนี้ยังเช่าอยู่ (ยังไม่คืน) จะนับเป็นการเช่าต่อเนื่อง ใช้ลูกค้า/กำหนดคืนเดิม
- * คืนค่ารายการที่ถูกลบ/สร้าง เพื่อให้หน้าเว็บกด "เลิกทำ" ได้
+ * ติ๊ก/ยกเลิก วันเช่าในตาราง — 1 การเช่า = 1 รายการ (กี่วันก็ได้)
+ * ติ๊กวันถัดจากการเช่าที่ยังไม่คืน = ต่อการเช่าเดิมอีก 1 วัน · ยกเลิกวันแรก/วันสุดท้าย = ลดลง 1 วัน
  */
 export async function setRentalDay(input: { bikeId: string; date: string; rented: boolean; time?: string }) {
-  return guard(async (): Promise<Rental[]> => {
+  return guard(async (): Promise<RentalChange> => {
     if (!isISODate(input.date)) throw new Error("วันที่ไม่ถูกต้อง");
     const store = getStore();
-    const all = await store.all("rentals");
-    const existing = all.filter((r) => r.bikeId === input.bikeId && r.date === input.date);
-    if (!input.rented) {
-      // วันเดียวมีได้หลายรอบ (คืนแล้วเช่าต่อคนใหม่) — ยกเลิกเฉพาะรอบที่ยังไม่คืนก่อน
-      const active = existing.filter((r) => !r.returnTime);
-      const target = active.length ? active : existing;
-      if (target.length) await store.remove("rentals", target.map((r) => r.id));
-      return target;
+    const rows = (await store.all("rentals")).filter((r) => r.bikeId === input.bikeId);
+    const plan = planDay(rows, input.date, input.rented, todayISO());
+    const none = { created: [], removed: [], before: null };
+    switch (plan.kind) {
+      case "none":
+        return none;
+      case "blocked":
+        throw new Error(plan.reason);
+      case "remove":
+        await store.remove("rentals", [plan.target.id]);
+        return { ...none, removed: [plan.target] };
+      case "create": {
+        const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
+        if (!bike) throw new Error("ไม่พบรถคันนี้");
+        const time = str(input.time) || nowTime();
+        const r = newRental(bike, { date: input.date, time, dueDate: addDays(input.date, 1), dueTime: time });
+        await store.insert("rentals", [r]);
+        return { ...none, created: [r] };
+      }
+      default: {
+        const { id, ...patch } = resized(plan.target, plan.kind);
+        await store.update("rentals", id, patch);
+        return { ...none, before: plan.target };
+      }
     }
-    if (existing.length) return [];
-    const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
-    if (!bike) throw new Error("ไม่พบรถคันนี้");
-    const prev = all.find(
-      (r) => r.bikeId === bike.id && r.date === addDays(input.date, -1) && r.days > 0 && !r.returnTime,
-    );
-    const time = str(input.time) || prev?.time || nowTime();
-    const r = prev
-      ? newRental(bike, {
-          date: input.date,
-          time: prev.time,
-          bookingId: bookingOf(prev),
-          customer: prev.customer,
-          price: prev.price,
-          dueDate: prev.dueDate && prev.dueDate >= input.date ? prev.dueDate : addDays(input.date, 1),
-          dueTime: prev.dueTime || prev.time,
-        })
-      : newRental(bike, { date: input.date, time, dueDate: addDays(input.date, 1), dueTime: time });
-    await store.insert("rentals", [r]);
-    return [r];
   });
 }
 
 /**
- * เช่ารถพร้อมกำหนดคืน — เช่าหลายวันจะสร้างบันทึกให้ทุกวัน (คิดเงินรายวันเหมือนใน Excel)
- * เช่น เช่า 28 ต.ค. คืน 31 ต.ค. = 3 วัน (28, 29, 30)
+ * เช่ารถพร้อมกำหนดคืน — บันทึกเป็น 1 รายการ (เคส) ไม่แยกรายวัน
+ * จำนวนวันนับทุก 24 ชม. เช่น เช่า 28 ต.ค. 10:00 คืน 31 ต.ค. 10:00 = 3 วัน
  */
 export async function createBooking(input: {
   bikeId: string;
@@ -200,72 +200,76 @@ export async function createBooking(input: {
     const store = getStore();
     const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
     if (!bike) throw new Error("ไม่พบรถคันนี้");
-    const dates = Array.from({ length: days }, (_, i) => addDays(input.date, i));
-    // ชนกันเฉพาะรอบที่ยังไม่คืน — คืนแล้วเช่าต่อคนใหม่ในวันเดียวกันได้
+    // ชนกันเฉพาะการเช่าที่ยังไม่คืน — คืนแล้วเช่าต่อคนใหม่ในวันเดียวกันได้
+    const today = todayISO();
+    const end = addDays(input.date, days - 1);
     const clash = (await store.all("rentals")).find(
-      (r) => r.bikeId === bike.id && dates.includes(r.date) && r.days > 0 && !r.returnTime,
+      (r) => r.bikeId === bike.id && r.days > 0 && !r.returnTime && r.date <= end && lastDayOut(r, today) >= input.date,
     );
     if (clash) throw new Error(`${bike.plate} ยังไม่ได้คืนรถของการเช่าวันที่ ${clash.date}`);
-    const bookingId = newId();
-    const rows = dates.map((date, i) => {
-      const r = newRental(bike, {
-        date,
-        time: input.time,
-        dueDate: input.dueDate,
-        dueTime: input.dueTime,
-        bookingId,
-        customer: input.customer,
-        note: input.note,
-      });
-      // ส่วนลด/ค่าปรับของทั้งการเช่า เก็บไว้ที่วันแรก (เหมือนใน Excel ที่ใส่ไว้แถวเดียว)
-      if (i === 0 && (discount || fine)) {
-        r.discount = discount;
-        r.fine = fine;
-        r.total = rentalTotal(r);
-      }
-      return r;
+    const r = newRental(bike, {
+      date: input.date,
+      time: input.time,
+      dueDate: input.dueDate,
+      dueTime: input.dueTime,
+      customer: input.customer,
+      note: input.note,
     });
-    await store.insert("rentals", rows);
-    return rows;
+    r.days = days;
+    r.discount = discount;
+    r.fine = fine;
+    r.total = rentalTotal(r);
+    await store.insert("rentals", [r]);
+    return [r];
   });
 }
 
 /**
  * ลูกค้านำรถมาคืน (time = null คือยกเลิกการคืน)
- * removeFuture: คืนก่อนกำหนด → ลบบันทึกของวันที่ยังไม่ถึงออก (ไม่คิดเงิน) และส่งกลับไปให้กดเลิกทำได้
+ * days: จำนวนวันที่คิดเงิน (คืนก่อน/หลังกำหนดเลือกคิดตามจริงได้) — null = ไม่เปลี่ยน
+ * ข้อมูลเก่าที่ยังเป็นแถวรายวัน: ทุกแถวของการเช่าเดียวกันถูกตั้งว่าคืนแล้วด้วย
  */
 export async function setReturned(
   id: string,
   time: string | null,
-  removeFuture = false,
+  days: number | null = null,
   extras?: { discount?: number; fine?: number; note?: string },
+  date?: string,
 ) {
-  return guard(async (): Promise<{ time: string; removed: Rental[]; before: Rental | null }> => {
+  return guard(async (): Promise<{ time: string; before: Rental }> => {
     const t = time === null ? "" : str(time) || nowTime();
     if (t && !TIME_RE.test(t)) throw new Error("เวลาไม่ถูกต้อง");
+    // วันที่คืนจริง: ค่าที่ส่งมา หรือวันนี้ (เวลาไทย)
+    const d = t ? (isISODate(date) ? date : todayISO()) : "";
     const store = getStore();
     const all = await store.all("rentals");
     const row = all.find((r) => r.id === id);
     if (!row) throw new Error("ไม่พบรายการเช่านี้ (อาจถูกลบไปแล้ว)");
+    if (d && d < row.date) throw new Error("วันที่คืนต้องไม่ก่อนวันที่ยืม");
     const booking = all.filter((r) => r.bikeId === row.bikeId && bookingOf(r) === bookingOf(row));
-    const removed = t && removeFuture ? booking.filter((r) => r.date > row.date) : [];
-    if (removed.length) await store.remove("rentals", removed.map((r) => r.id));
-    // ส่วนลด/ค่าปรับ/หมายเหตุ บันทึกที่แถวของวันที่กดคืน แล้วคำนวณยอดใหม่
+    // จำนวนวัน / ส่วนลด / ค่าปรับ / หมายเหตุ บันทึกที่รายการนี้ แล้วคำนวณยอดใหม่
     let rowPatch: Partial<Rental> = {};
+    if (days !== null) {
+      if (!(days > 0) || days > 366) throw new Error("จำนวนวันไม่ถูกต้อง");
+      rowPatch.days = days;
+    }
     if (extras) {
       const discount = num(extras.discount);
       const fine = num(extras.fine);
       if (discount < 0 || fine < 0) throw new Error("ส่วนลด / ค่าปรับ ต้องไม่ติดลบ");
-      const note = str(extras.note);
-      rowPatch = { discount, fine, note, total: rentalTotal({ ...row, discount, fine }) };
+      rowPatch = { ...rowPatch, discount, fine, note: str(extras.note) };
     }
+    if (days !== null || extras) rowPatch.total = rentalTotal({ ...row, ...rowPatch });
     await store.updateMany(
       "rentals",
       booking
-        .filter((r) => !removed.includes(r) && (r.returnTime !== t || (r.id === row.id && extras)))
-        .map((r) => ({ id: r.id, patch: r.id === row.id ? { returnTime: t, ...rowPatch } : { returnTime: t } })),
+        .filter((r) => r.returnTime !== t || r.returnDate !== d || r.id === row.id)
+        .map((r) => ({
+          id: r.id,
+          patch: r.id === row.id ? { returnTime: t, returnDate: d, ...rowPatch } : { returnTime: t, returnDate: d },
+        })),
     );
-    return { time: t, removed, before: extras ? row : null };
+    return { time: t, before: row };
   });
 }
 
@@ -297,6 +301,8 @@ export async function saveRental(input: Partial<Rental>) {
       dueDate: isISODate(input.dueDate) ? input.dueDate : "",
       dueTime: str(input.dueTime),
       returnTime: str(input.returnTime),
+      // มีเวลาคืนแต่ไม่ได้ใส่วันที่ → ถือว่าคืนวันเดียวกับวันที่ยืม
+      returnDate: str(input.returnTime) ? (isISODate(input.returnDate) ? input.returnDate : input.date) : "",
       bookingId: str(input.bookingId),
       bikeId: bike.id,
       plate: bike.plate,
@@ -411,7 +417,7 @@ export async function saveSettings(input: { laundryRate?: number; laundryPrices?
 /** นำเข้าข้อมูลจาก data/seed.json (สร้างจากไฟล์ Excel ด้วย scripts/extract_seed.py) */
 export async function importSeed() {
   return guard(async () => {
-    let seed: { bikes: Omit<Bike, "id" | "note" | "createdAt">[]; rentals: Omit<Rental, "id" | "bikeId" | "dueDate" | "dueTime" | "returnTime" | "bookingId" | "total" | "createdAt">[] };
+    let seed: { bikes: Omit<Bike, "id" | "note" | "createdAt">[]; rentals: Omit<Rental, "id" | "bikeId" | "dueDate" | "dueTime" | "returnDate" | "returnTime" | "bookingId" | "total" | "createdAt">[] };
     try {
       seed = JSON.parse(await fs.readFile(path.join(process.cwd(), "data", "seed.json"), "utf8"));
     } catch {
@@ -441,6 +447,7 @@ export async function importSeed() {
         bikeId: bike.id,
         dueDate: "",
         dueTime: "",
+        returnDate: "",
         returnTime: "",
         bookingId: "",
         total: 0,

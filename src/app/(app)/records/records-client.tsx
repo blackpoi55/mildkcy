@@ -16,19 +16,27 @@ import { confirmDialog } from "@/lib/confirm";
 import { addDays, addMonths, nowTime, startOfMonth, thShort } from "@/lib/dates";
 import { baht, number } from "@/lib/format";
 import type { AppSettings } from "@/lib/laundry";
-import { overdueMinutes } from "@/lib/rental-status";
+import { overdueMinutes, returnDateOf, returnedText } from "@/lib/rental-status";
 import type { Bike, Laundry, Rental } from "@/lib/schema";
 import { EditLaundry } from "../laundry/laundry-client";
 import { RentalForm } from "../rentals/rentals-client";
 
 export type RecordsTab = "rent" | "laundry";
+/** ช่วงวันที่ของแท็บเช่ารถกรองตามวันไหน */
+export type RentBasis = "rent" | "due" | "return";
+
+const BASIS: { value: RentBasis; label: string; verb: string; hint: string }[] = [
+  { value: "rent", label: "วันที่ยืม", verb: "ยืมรถ", hint: "แสดงรายการที่ลูกค้ายืมรถในช่วงวันที่ด้านล่าง" },
+  { value: "due", label: "วันที่ต้องคืน", verb: "ถึงกำหนดคืน", hint: "แสดงรายการที่ถึงกำหนดคืนในช่วงวันที่ด้านล่าง" },
+  { value: "return", label: "วันที่คืนจริง", verb: "คืนรถ", hint: "แสดงรายการที่ลูกค้านำรถมาคืนแล้วในช่วงวันที่ด้านล่าง" },
+];
 
 type Tone = "neutral" | "brand" | "good" | "warn" | "bad";
 
 /** สถานะการเช่าแบบอ่านง่าย */
 function rentStatus(r: Rental, today: string, now: string): { key: string; label: string; tone: Tone } {
   if (r.days <= 0) return { key: "adjust", label: "ปรับยอด", tone: "neutral" };
-  if (r.returnTime) return { key: "returned", label: `คืนแล้ว ${r.returnTime}`, tone: "good" };
+  if (r.returnTime) return { key: "returned", label: "คืนแล้ว", tone: "good" };
   if (overdueMinutes(r, today, now) > 0) return { key: "overdue", label: "เลยกำหนด", tone: "bad" };
   if (r.dueDate || r.date >= today) return { key: "active", label: "กำลังเช่า", tone: "brand" };
   return { key: "done", label: "จบแล้ว", tone: "neutral" };
@@ -66,6 +74,7 @@ function downloadCsv(name: string, header: string[], rows: (string | number)[][]
 
 export function RecordsClient({
   tab,
+  by,
   from,
   to,
   today,
@@ -75,6 +84,7 @@ export function RecordsClient({
   settings,
 }: {
   tab: RecordsTab;
+  by: RentBasis;
   from: string;
   to: string;
   today: string;
@@ -97,7 +107,7 @@ export function RecordsClient({
   const now = nowTime();
 
   const go = (params: Record<string, string>) => {
-    const p = new URLSearchParams({ tab, ...(from ? { from, to } : { all: "1" }), ...params });
+    const p = new URLSearchParams({ tab, by, ...(from ? { from, to } : { all: "1" }), ...params });
     if (params.all) {
       p.delete("from");
       p.delete("to");
@@ -124,9 +134,17 @@ export function RecordsClient({
       return `${r.plate} ${r.customer} ${r.note} ${r.date}`.toLowerCase().includes(needle);
     });
     const val = (r: Rental) =>
-      sort.key === "date" ? `${r.date} ${r.time}` : sort.key === "name" ? r.plate : String(r.total).padStart(12, "0");
+      sort.key === "date"
+        ? by === "due"
+          ? `${r.dueDate} ${r.dueTime}`
+          : by === "return"
+            ? `${returnDateOf(r)} ${r.returnTime}`
+            : `${r.date} ${r.time}`
+        : sort.key === "name"
+          ? r.plate
+          : String(r.total).padStart(12, "0");
     return list.sort((a, b) => val(a).localeCompare(val(b), "th") * sort.dir);
-  }, [rentals, status, needle, sort, today, now]);
+  }, [rentals, status, needle, sort, today, now, by]);
 
   const washRows = useMemo(() => {
     const list = laundry.filter((l) => {
@@ -222,9 +240,9 @@ export function RecordsClient({
     if (tab === "rent") {
       downloadCsv(
         `เช่ารถ_${range}.csv`,
-        ["วันที่ยืม", "เวลายืม", "ทะเบียน", "ลูกค้า", "กำหนดคืน", "เวลากำหนดคืน", "เวลาคืนจริง", "สถานะ", "จำนวนวัน", "ราคา/วัน", "ส่วนลด", "ค่าปรับ", "ยอดรวม", "หมายเหตุ"],
+        ["วันที่ยืม", "เวลายืม", "ทะเบียน", "ลูกค้า", "กำหนดคืน", "เวลากำหนดคืน", "วันที่คืนจริง", "เวลาคืนจริง", "สถานะ", "จำนวนวัน", "ราคา/วัน", "ส่วนลด", "ค่าปรับ", "ยอดรวม", "หมายเหตุ"],
         rentRows.map((r) => [
-          r.date, r.time, r.plate, r.customer, r.dueDate, r.dueTime, r.returnTime,
+          r.date, r.time, r.plate, r.customer, r.dueDate, r.dueTime, returnDateOf(r), r.returnTime,
           rentStatus(r, today, now).label, r.days, r.price, r.discount, r.fine, r.total, r.note,
         ]),
       );
@@ -281,6 +299,19 @@ export function RecordsClient({
           </Button>
         </div>
 
+        {tab === "rent" && (
+          <div className="rounded-xl bg-surface-2/60 p-3">
+            <p className="mb-2 text-xs font-medium text-ink-2">ช่วงวันที่ด้านล่าง ใช้ดูตาม</p>
+            <Segmented
+              className="w-full sm:w-auto"
+              value={by}
+              onChange={(v) => go({ by: v })}
+              options={BASIS.map((b) => ({ value: b.value, label: b.label }))}
+            />
+            <p className="mt-2 text-xs text-muted">{BASIS.find((b) => b.value === by)?.hint}</p>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
           {presets.map((p) => (
             <button
@@ -333,7 +364,14 @@ export function RecordsClient({
             />
           </div>
           <div className="w-full sm:w-52">
-            <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="สถานะ">
+            <Select
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                if (tab === "rent" && e.target.value === "returned" && by !== "return") go({ by: "return" });
+              }}
+              aria-label="สถานะ"
+            >
               {(tab === "rent" ? RENT_STATUS : LAUNDRY_STATUS).map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
@@ -347,7 +385,9 @@ export function RecordsClient({
       {/* ---------- สรุป + จัดการหลายรายการ ---------- */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <p className="text-sm text-muted">
-          {from ? `${thShort(from)} – ${thShort(to)}` : "ทุกช่วงเวลา"} · <b className="text-ink">{number(totals.count)}</b> รายการ ·{" "}
+          {tab === "rent" && <b className="text-ink">{BASIS.find((b) => b.value === by)?.verb} </b>}
+          {from ? (from === to ? `วันที่ ${thShort(from)}` : `${thShort(from)} – ${thShort(to)}`) : "ทุกช่วงเวลา"} ·{" "}
+          <b className="text-ink">{number(totals.count)}</b> รายการ ·{" "}
           {totals.qty} · รวม <b className="tabular text-ink">{baht(totals.sum)}</b>
           {!!totals.unpaid && <span className="text-warn"> · ค้างชำระ {baht(totals.unpaid)}</span>}
         </p>
@@ -399,12 +439,13 @@ export function RecordsClient({
                         aria-label="เลือกทั้งหมด"
                       />
                     </th>
-                    {sortHead("date", tab === "rent" ? "วันที่ยืม" : "วันที่")}
                     {tab === "rent" ? (
                       <>
                         {sortHead("name", "ทะเบียน")}
                         <th className="px-3 py-3 font-medium">ลูกค้า</th>
-                        <th className="px-3 py-3 font-medium whitespace-nowrap">กำหนดคืน</th>
+                        {by === "rent" ? sortHead("date", "ยืม ▾", "text-brand") : <th className="px-3 py-3 font-medium">ยืม</th>}
+                        {by === "due" ? sortHead("date", "กำหนดคืน ▾", "text-brand") : <th className="px-3 py-3 font-medium whitespace-nowrap">กำหนดคืน</th>}
+                        {by === "return" ? sortHead("date", "คืนจริง ▾", "text-brand") : <th className="px-3 py-3 font-medium whitespace-nowrap">คืนจริง</th>}
                         <th className="px-3 py-3 font-medium">สถานะ</th>
                         <th className="px-3 py-3 text-right font-medium">วัน</th>
                         <th className="px-3 py-3 text-right font-medium whitespace-nowrap">ราคา/วัน</th>
@@ -413,6 +454,7 @@ export function RecordsClient({
                       </>
                     ) : (
                       <>
+                        {sortHead("date", "วันที่")}
                         {sortHead("name", "ห้อง")}
                         <th className="px-3 py-3 text-right font-medium">กก.</th>
                         {sortHead("amount", "ราคา", "text-right")}
@@ -436,13 +478,16 @@ export function RecordsClient({
                             )}
                           >
                             <td className="px-4 py-2.5">{check(r.id)}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap">
-                              {thShort(r.date)} <span className="text-muted">{r.time}</span>
-                            </td>
                             <td className="px-3 py-2.5 font-semibold whitespace-nowrap">{r.plate}</td>
                             <td className="max-w-40 truncate px-3 py-2.5 text-ink-2">{r.customer || "-"}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-ink-2">
+                            <td className={cn("px-3 py-2.5 whitespace-nowrap", by === "rent" ? "font-medium" : "text-ink-2")}>
+                              {thShort(r.date)} <span className="text-muted">{r.time}</span>
+                            </td>
+                            <td className={cn("px-3 py-2.5 whitespace-nowrap", by === "due" ? "font-medium" : "text-ink-2")}>
                               {r.dueDate ? `${thShort(r.dueDate)} ${r.dueTime}` : "-"}
+                            </td>
+                            <td className={cn("px-3 py-2.5 whitespace-nowrap", by === "return" ? "font-medium" : "text-ink-2")}>
+                              {returnedText(r) || "-"}
                             </td>
                             <td className="px-3 py-2.5">
                               <Badge tone={st.tone}>{st.label}</Badge>
@@ -485,7 +530,7 @@ export function RecordsClient({
                 <tfoot>
                   <tr className="border-t border-line bg-surface-2/50 font-semibold">
                     <td />
-                    <td className="px-3 py-3" colSpan={tab === "rent" ? 5 : 2}>
+                    <td className="px-3 py-3" colSpan={tab === "rent" ? 6 : 2}>
                       รวม {number(totals.count)} รายการ
                     </td>
                     {tab === "rent" ? (
@@ -523,7 +568,11 @@ export function RecordsClient({
                       check={check(r.id)}
                       onOpen={() => setEditRental(r)}
                       title={r.plate}
-                      sub={[`${thShort(r.date)} ${r.time}`, r.customer, r.dueDate && `คืน ${thShort(r.dueDate)} ${r.dueTime}`]
+                      sub={[
+                        `ยืม ${thShort(r.date)} ${r.time}`,
+                        r.returnTime ? `คืนจริง ${returnedText(r)}` : r.dueDate && `กำหนดคืน ${thShort(r.dueDate)} ${r.dueTime}`,
+                        r.customer,
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                       amount={baht(r.total)}

@@ -1,5 +1,6 @@
 import { addDays, addMonths, dayOfWeek, diffDays, rangeOf, shift, startOfMonth, thShort, TH_DAYS_SHORT, TH_MONTHS_SHORT, type Period } from "./dates";
 import { expiryState } from "./expiry";
+import { coversDay } from "./rental-status";
 import { RENTABLE_STATUS, type Bike, type Laundry, type Rental } from "./schema";
 
 export type DayPoint = { date: string; label: string; rent: number; laundry: number; bikes: number };
@@ -59,11 +60,10 @@ export function buildDashboard(
     ]),
   );
   for (const r of rentals) {
+    // รายได้นับที่วันเริ่มเช่า, จำนวนรถนับทุกวันที่รถออกไป
     const p = byDate.get(r.date);
-    if (p) {
-      p.rent += r.total;
-      p.bikes += r.days;
-    }
+    if (p) p.rent += r.total;
+    for (const d of chartDays) if (coversDay(r, d, today)) byDate.get(d)!.bikes += 1;
   }
   for (const l of laundry) {
     const p = byDate.get(l.date);
@@ -124,7 +124,7 @@ export function buildDashboard(
     .sort((a, b) => a.left - b.left);
 
   // วันนี้: รถที่ว่าง/ถูกเช่า
-  const dayRentals = rentals.filter((r) => r.date === date && r.days > 0);
+  const dayRentals = rentals.filter((r) => coversDay(r, date, today));
   const rentedIds = new Set(dayRentals.map((r) => r.bikeId));
 
   return {
@@ -140,7 +140,7 @@ export function buildDashboard(
     rooms,
     alerts,
     day: {
-      rented: dayRentals.length,
+      rented: rentedIds.size,
       free: bikes.filter((b) => b.status === RENTABLE_STATUS && !rentedIds.has(b.id)),
     },
   };

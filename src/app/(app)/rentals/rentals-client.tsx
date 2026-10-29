@@ -10,10 +10,27 @@ import { confirmDialog } from "@/lib/confirm";
 import { TH_DAYS_SHORT, addDays, diffDays, nowTime, rangeOf, thLong, thShort, type Period } from "@/lib/dates";
 import { baht } from "@/lib/format";
 import { useAction } from "@/lib/hooks";
-import { durationText, dueText, minutesUntilDue, overdueMinutes } from "@/lib/rental-status";
+import {
+  backOn,
+  billingEnd,
+  coversDay,
+  durationText,
+  dueText,
+  lastDayOut,
+  minutesUntilDue,
+  overdueMinutes,
+  planDay,
+  resized,
+  returnDateOf,
+  returnedText,
+  usedDays,
+  type DayPlan,
+} from "@/lib/rental-status";
 import { bookingOf, rentalTotal, type Bike, type Rental } from "@/lib/schema";
 
 export type RentalView = "day" | "week" | "list";
+/** แท็บบนสุด: ปล่อยเช่า / รับรถคืน */
+export type RentalMode = "rent" | "return";
 
 const escapeHtml = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -33,15 +50,19 @@ function NoMatch({ q }: { q?: string }) {
 }
 
 type Change =
-  | { type: "toggle"; bike: Bike; date: string; rented: boolean }
+  /** เพิ่ม/แทนที่รายการ (ตาม id) */
+  | { type: "put"; row: Rental }
+  | { type: "drop"; id: string }
   | { type: "add"; rows: Rental[] }
-  /** คืนรถทั้งการเช่า (ทุกวันของ booking) — removeAfter: ลบวันที่หลังจากนี้ (คืนก่อนกำหนด) */
+  /** คืนรถ (ข้อมูลเก่าที่เป็นแถวรายวัน: ทุกแถวของ booking) — days: จำนวนวันที่คิดเงินใหม่ */
   | {
       type: "return";
       key: string;
       bikeId: string;
       time: string;
-      removeAfter: string | null;
+      /** วันที่คืนจริง ("" = ยกเลิกการคืน) */
+      date: string;
+      days: number | null;
       rowId: string;
       extras?: Extras;
     };
@@ -57,6 +78,9 @@ export function RentalsClient({
   date,
   today,
   view,
+  mode,
+  outstanding,
+  returnedToday,
 }: {
   bikes: Bike[];
   allBikes: Bike[];
@@ -64,6 +88,10 @@ export function RentalsClient({
   date: string;
   today: string;
   view: RentalView;
+  mode: RentalMode;
+  /** รถที่ยังไม่คืน (ทุกวัน ไม่จำกัดเดือนที่ดู) */
+  outstanding: Rental[];
+  returnedToday: Rental[];
 }) {
   const setParam = useSetParam();
   const [, start] = useTransition();
@@ -71,86 +99,102 @@ export function RentalsClient({
   const [renting, setRenting] = useState<Bike | null>(null);
   const [returning, setReturning] = useState<Rental | null>(null);
   const [q, setQ] = useState("");
+  /** ซ่อนรายการที่เพิ่งกดคืน ระหว่างรอข้อมูลใหม่จากชีต */
+  const [gone, setGone] = useState<Set<string>>(new Set());
   const [show, setShow] = useState<"all" | "active" | "free" | "returned">("all");
 
-  const [items, applyChange] = useOptimistic(rentals, (state, t: Change) =>
-    t.type === "add"
-      ? [...state, ...t.rows]
-      : t.type === "return"
-        ? state
-            .filter((r) => !(t.removeAfter && sameBooking(r, t.key, t.bikeId) && r.date > t.removeAfter))
-            .map((r) =>
-              !sameBooking(r, t.key, t.bikeId)
-                ? r
-                : r.id === t.rowId && t.extras
-                  ? { ...r, ...t.extras, returnTime: t.time, total: rentalTotal({ ...r, ...t.extras }) }
-                  : { ...r, returnTime: t.time },
-            )
-        : t.rented
-      ? [
-          ...state,
-          {
-            id: `tmp-${t.bike.id}-${t.date}`,
-            date: t.date,
-            time: nowTime(),
-            dueDate: addDays(t.date, 1),
-            dueTime: nowTime(),
+  const [items, applyChange] = useOptimistic(rentals, (state, t: Change) => {
+    switch (t.type) {
+      case "add":
+        return [...state, ...t.rows];
+      case "put":
+        return state.some((r) => r.id === t.row.id) ? state.map((r) => (r.id === t.row.id ? t.row : r)) : [...state, t.row];
+      case "drop":
+        return state.filter((r) => r.id !== t.id);
+      case "return":
+        return state.map((r) => {
+          if (!sameBooking(r, t.key, t.bikeId)) return r;
+          if (r.id !== t.rowId) return { ...r, returnTime: t.time, returnDate: t.date };
+          const n = { ...r, ...t.extras, ...(t.days ? { days: t.days } : {}), returnTime: t.time, returnDate: t.date };
+          return { ...n, total: rentalTotal(n) };
+        });
+    }
+  });
+
+  /** ติ๊ก/ยกเลิกวันเช่าในตาราง ตามแผนที่คำนวณไว้ (สร้างใหม่ / ต่อวัน / ลดวัน / ลบ) — มีปุ่มเลิกทำ */
+  const apply = (bike: Bike, d: string, rented: boolean, plan: DayPlan) =>
+    start(async () => {
+      if (plan.kind === "create") {
+        const time = d === today ? nowTime() : "09:00";
+        applyChange({
+          type: "put",
+          row: {
+            id: `tmp-${bike.id}-${d}`,
+            date: d,
+            time,
+            dueDate: addDays(d, 1),
+            dueTime: time,
+            returnDate: "",
             returnTime: "",
             bookingId: "",
-            bikeId: t.bike.id,
-            plate: t.bike.plate,
+            bikeId: bike.id,
+            plate: bike.plate,
             days: 1,
-            price: t.bike.dailyRate,
+            price: bike.dailyRate,
             discount: 0,
             fine: 0,
-            total: t.bike.dailyRate,
+            total: bike.dailyRate,
             customer: "",
             note: "",
             createdAt: "",
           },
-        ]
-      : state.filter((r) => !(r.bikeId === t.bike.id && r.date === t.date)),
-  );
+        });
+      } else if (plan.kind === "remove") applyChange({ type: "drop", id: plan.target.id });
+      else if (plan.kind !== "none" && plan.kind !== "blocked") applyChange({ type: "put", row: resized(plan.target, plan.kind) });
 
-  const apply = (bike: Bike, d: string, rented: boolean, undoable = true) =>
-    start(async () => {
-      applyChange({ type: "toggle", bike, date: d, rented });
       const res = await setRentalDay({ bikeId: bike.id, date: d, rented, time: d === today ? nowTime() : "" });
       if (!res.ok) return void toast.error(res.error);
-      const changed = res.data ?? [];
-      if (!undoable || !changed.length) return;
-      if (rented) {
-        toast.success(`บันทึกเช่า ${bike.plate} · ${thShort(d)}`, {
-          action: { label: "เลิกทำ", onClick: () => apply(bike, d, false, false) },
-        });
-      } else {
-        // เก็บรายการที่ถูกลบไว้ กด "เลิกทำ" แล้วได้ข้อมูลเดิมกลับมาครบ (เวลา ลูกค้า ส่วนลด)
-        toast(`ยกเลิกการเช่า ${bike.plate} · ${thShort(d)} แล้ว`, {
-          duration: 10_000,
-          action: {
-            label: "เลิกทำ",
-            onClick: () =>
-              start(async () => {
-                const r = await restoreRentals(changed);
-                if (r.ok) toast.success(`คืนข้อมูลเช่า ${bike.plate} แล้ว`);
-                else toast.error(r.error);
-              }),
-          },
-        });
-      }
+      const c = res.data;
+      if (!c || (!c.created.length && !c.removed.length && !c.before)) return;
+      const label =
+        plan.kind === "extend"
+          ? `ต่อการเช่า ${bike.plate} เป็น ${plan.target.days + 1} วัน`
+          : plan.kind === "shrink" || plan.kind === "shift"
+            ? `ลดการเช่า ${bike.plate} เหลือ ${plan.target.days - 1} วัน`
+            : rented
+              ? `บันทึกเช่า ${bike.plate} · ${thShort(d)}`
+              : `ยกเลิกการเช่า ${bike.plate} · ${thShort(d)} แล้ว`;
+      toast.success(label, {
+        duration: 10_000,
+        action: {
+          label: "เลิกทำ",
+          onClick: () =>
+            start(async () => {
+              // ย้อนกลับครบทุกช่อง (เวลา ลูกค้า ส่วนลด จำนวนวัน)
+              const r = c.created.length
+                ? await deleteRentals(c.created.map((x) => x.id))
+                : c.removed.length
+                  ? await restoreRentals(c.removed)
+                  : await saveRental(c.before!);
+              if (r.ok) toast.success("เลิกทำแล้ว");
+              else toast.error(r.error);
+            }),
+        },
+      });
     });
 
-  const runReturn = (r: Rental, time: string | null, removeFuture: boolean, extras?: Extras) => {
+  const runReturn = (r: Rental, time: string | null, days: number | null, extras?: Extras, date?: string) => {
     applyChange({
       type: "return",
       key: bookingOf(r),
       bikeId: r.bikeId,
       time: time ?? "",
-      removeAfter: removeFuture ? r.date : null,
+      date: time ? date || today : "",
+      days,
       rowId: r.id,
       extras,
     });
-    return setReturned(r.id, time, removeFuture, extras);
+    return setReturned(r.id, time, days, extras, date);
   };
 
   /** บันทึกคืนรถจากหน้าต่างคืนรถ — มีปุ่มเลิกทำ (คืนค่าส่วนลด/ค่าปรับ/หมายเหตุเดิม + วันที่ถูกลบ) */
@@ -158,23 +202,29 @@ export function RentalsClient({
     new Promise<boolean>((resolve) =>
       start(async () => {
         const extras = { discount: input.discount, fine: input.fine, note: input.note };
-        const res = await runReturn(r, input.time, input.removeFuture, extras);
+        const res = await runReturn(r, input.time, input.days === r.days ? null : input.days, extras, input.date);
         if (!res.ok) {
           toast.error(res.error);
           return resolve(false);
         }
         resolve(true);
-        const removed = res.data?.removed ?? [];
+        setGone((g) => new Set(g).add(r.id));
         toast.success(
-          `คืนรถ ${r.plate} แล้ว · ${input.time} น.${removed.length ? ` (ลบ ${removed.length} วันที่เหลือ)` : ""}`,
+          `คืนรถ ${r.plate} แล้ว · ${input.date !== today ? `${thShort(input.date)} ` : ""}${input.time} น.${
+            input.days !== r.days ? ` (คิด ${input.days} วัน)` : ""
+          }`,
           {
             duration: 10_000,
             action: {
               label: "เลิกทำ",
               onClick: () =>
                 start(async () => {
-                  const u = await runReturn(r, null, false, { discount: r.discount, fine: r.fine, note: r.note });
-                  if (u.ok && removed.length) await restoreRentals(removed);
+                  const u = await runReturn(r, null, r.days, { discount: r.discount, fine: r.fine, note: r.note });
+                  setGone((g) => {
+                    const n = new Set(g);
+                    n.delete(r.id);
+                    return n;
+                  });
                   if (u.ok) toast.success("เลิกทำแล้ว");
                   else toast.error(u.error);
                 }),
@@ -186,8 +236,8 @@ export function RentalsClient({
 
   const unReturn = (r: Rental) =>
     start(async () => {
-      const prev = r.returnTime;
-      const res = await runReturn(r, null, false);
+      const prev = { time: r.returnTime, date: returnDateOf(r) };
+      const res = await runReturn(r, null, null);
       if (!res.ok) return void toast.error(res.error);
       toast.success(`ยกเลิกการคืนรถ ${r.plate} แล้ว`, {
         duration: 10_000,
@@ -195,7 +245,7 @@ export function RentalsClient({
           label: "เลิกทำ",
           onClick: () =>
             start(async () => {
-              const u = await runReturn(r, prev, false);
+              const u = await runReturn(r, prev.time, null, undefined, prev.date);
               if (u.ok) toast.success("เลิกทำแล้ว");
               else toast.error(u.error);
             }),
@@ -206,7 +256,7 @@ export function RentalsClient({
   /** กดคืนรถ = เปิดหน้าต่างคืนรถ (แก้เวลา ส่วนลด ค่าปรับ หมายเหตุได้) / ยกเลิกการคืน = ทำทันที */
   const markReturned = (r: Rental, returned: boolean) => (returned ? setReturning(r) : unReturn(r));
 
-  /** เช่าใหม่พร้อมกำหนดคืน (สร้างบันทึกทุกวันจนถึงวันคืน) — มีปุ่มเลิกทำ */
+  /** เช่าใหม่พร้อมกำหนดคืน (1 รายการ กี่วันก็ได้) — มีปุ่มเลิกทำ */
   const book = (bike: Bike, input: RentInput) =>
     new Promise<boolean>((resolve) =>
       start(async () => {
@@ -238,23 +288,37 @@ export function RentalsClient({
       }),
     );
 
-  /** การยกเลิกเช่าต้องยืนยันก่อน กันเผลอกด */
+  /** ติ๊ก/ยกเลิกวันเช่า — การลด/ยกเลิกต้องยืนยันก่อน กันเผลอกด, แก้กลางการเช่าไม่ได้ → เปิดหน้าต่างแก้ไข */
   const toggle = async (bike: Bike, d: string, rented: boolean) => {
-    if (!rented) {
-      const all = items.filter((r) => r.bikeId === bike.id && r.date === d);
-      const active = all.filter((r) => !r.returnTime);
-      const recs = active.length ? active : all;
-      const time = recs.find((r) => r.time)?.time;
-      const ok = await confirmDialog({
-        title: `ยกเลิกการเช่า ${escapeHtml(bike.plate)}?`,
-        html: `${thLong(d)}${time ? ` · เวลา ${time}` : ""} · ${baht(recs.reduce((s, r) => s + r.total, 0))}<br><small>เวลา ลูกค้า ส่วนลด และค่าปรับของวันนี้จะถูกลบ</small>`,
-        confirmText: "ยกเลิกการเช่า",
-        cancelText: "ไม่ใช่ เก็บไว้",
-        danger: true,
-      });
+    const plan = planDay(items.filter((r) => r.bikeId === bike.id), d, rented, today);
+    if (plan.kind === "none") return;
+    if (plan.kind === "blocked") {
+      toast(plan.reason);
+      if (!plan.target.id.startsWith("tmp-")) setEditing(plan.target);
+      return;
+    }
+    if (plan.kind === "remove" || plan.kind === "shrink" || plan.kind === "shift") {
+      const t = plan.target;
+      const ok = await confirmDialog(
+        plan.kind === "remove"
+          ? {
+              title: `ยกเลิกการเช่า ${escapeHtml(bike.plate)}?`,
+              html: `${thLong(t.date)}${t.time ? ` · เวลา ${t.time}` : ""} · ${baht(t.total)}${t.customer ? ` · ${escapeHtml(t.customer)}` : ""}<br><small>เวลา ลูกค้า ส่วนลด และค่าปรับของการเช่านี้จะถูกลบ</small>`,
+              confirmText: "ยกเลิกการเช่า",
+              cancelText: "ไม่ใช่ เก็บไว้",
+              danger: true,
+            }
+          : {
+              title: `ลดการเช่า ${escapeHtml(bike.plate)} เหลือ ${t.days - 1} วัน?`,
+              html: `ไม่คิดเงินวันที่ ${thLong(d)} · ยอดใหม่ ${baht(resized(t, plan.kind).total)}`,
+              confirmText: "ลดวัน",
+              cancelText: "ไม่ใช่ เก็บไว้",
+              danger: true,
+            },
+      );
       if (!ok) return;
     }
-    apply(bike, d, rented);
+    apply(bike, d, rented, plan);
   };
 
   const period: Period = view === "day" ? "day" : view === "week" ? "week" : "month";
@@ -262,15 +326,18 @@ export function RentalsClient({
   // ---------------------------------------------------------------- ค้นหา / กรอง
   const needle = norm(q);
   const { days: weekDays } = rangeOf("week", date);
-  const rowsOn = (from: string, to: string) => items.filter((r) => r.date >= from && r.date <= to);
+  // รายการที่รถออกไปในช่วงนี้ (เช่าหลายวันนับทุกวันที่รถไม่อยู่ร้าน)
+  const rowsOn = (from: string, to: string) => items.filter((r) => r.date <= to && lastDayOut(r, today) >= from);
   const textMatch = (b: Bike, rows: Rental[]) =>
     !needle ||
     norm(`${b.plate} ${b.brand} ${b.model} ${rows.filter((r) => r.bikeId === b.id).map((r) => r.customer).join(" ")}`).includes(
       needle,
     );
   const dayRows = rowsOn(date, date);
-  const activeIds = new Set(dayRows.filter((r) => r.days > 0 && !r.returnTime).map((r) => r.bikeId));
-  const returnedIds = new Set(dayRows.filter((r) => r.returnTime).map((r) => r.bikeId));
+  const activeIds = new Set(
+    dayRows.filter((r) => r.days > 0 && (!r.returnTime || returnDateOf(r) > date)).map((r) => r.bikeId),
+  );
+  const returnedIds = new Set(dayRows.filter((r) => backOn(r, date)).map((r) => r.bikeId));
   const dayBikes = bikes.filter(
     (b) =>
       textMatch(b, dayRows) &&
@@ -284,8 +351,91 @@ export function RentalsClient({
   const listRentals = needle ? items.filter((r) => norm(`${r.plate} ${r.customer} ${r.note}`).includes(needle)) : items;
   const filtering = !!needle || (view === "day" && show !== "all");
 
+  const nowHM = nowTime();
+  const out = outstanding.filter(
+    (r) => !gone.has(r.id) && (!needle || norm(`${r.plate} ${r.customer} ${bikeLabel(allBikes, r.bikeId)}`).includes(needle)),
+  );
+  const lateCount = out.filter((r) => (minutesUntilDue(r, today, nowHM) ?? 1) < 0).length;
+  const backToday = returnedToday.filter(
+    (r) => !needle || norm(`${r.plate} ${r.customer} ${bikeLabel(allBikes, r.bikeId)}`).includes(needle),
+  );
+
+  const searchBox = (
+    <div className="relative min-w-0 flex-1 basis-60">
+      <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="ค้นหาทะเบียน ยี่ห้อ รุ่น หรือชื่อลูกค้า…"
+        className="pr-9 pl-9"
+        aria-label="ค้นหา"
+      />
+      {q && (
+        <button
+          onClick={() => setQ("")}
+          className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 cursor-pointer place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
+          aria-label="ล้างคำค้น"
+        >
+          <X className="size-4" />
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <>
+      {/* แท็บหลัก: เช่ารถ / คืนรถ */}
+      <div className="mb-5 grid grid-cols-2 gap-2 rounded-2xl bg-surface-2 p-1.5 sm:inline-grid sm:min-w-[420px]" role="tablist">
+        {(
+          [
+            ["rent", "เช่ารถ", "ปล่อยเช่า / ดูตาราง", <Plus key="i" className="size-5" />],
+            ["return", "คืนรถ", `ยังไม่คืน ${outstanding.length} คัน`, <KeyRound key="i" className="size-5" />],
+          ] as const
+        ).map(([key, label, sub, icon]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={mode === key}
+            onClick={() => setParam("mode", key)}
+            className={cn(
+              "relative flex cursor-pointer items-center gap-3 rounded-xl px-4 py-2.5 text-left transition",
+              mode === key ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
+            )}
+          >
+            <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg", mode === key ? "bg-brand-soft text-brand" : "bg-surface/60")}>
+              {icon}
+            </span>
+            <span className="min-w-0">
+              <span className="block font-semibold">{label}</span>
+              <span className="block truncate text-xs">{sub}</span>
+            </span>
+            {key === "return" && lateCount > 0 && (
+              <span className="absolute top-2 right-2 rounded-full bg-bad px-1.5 text-[11px] font-bold text-white">
+                เลย {lateCount}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {mode === "return" ? (
+        <>
+          <div className="mb-5 flex">{searchBox}</div>
+          <ReturnTab
+            outstanding={out}
+            returnedToday={backToday}
+            bikes={allBikes}
+            today={today}
+            now={nowHM}
+            searching={!!needle}
+            onReturn={(r) => setReturning(r)}
+            onUnreturn={unReturn}
+            onEdit={setEditing}
+            onGoRent={() => setParam("mode", "rent")}
+          />
+        </>
+      ) : (
+        <>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <DateNav date={date} period={period} today={today} />
         <div className="flex items-center gap-2">
@@ -308,25 +458,7 @@ export function RentalsClient({
       </div>
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 basis-60">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="ค้นหาทะเบียน ยี่ห้อ รุ่น หรือชื่อลูกค้า…"
-            className="pr-9 pl-9"
-            aria-label="ค้นหา"
-          />
-          {q && (
-            <button
-              onClick={() => setQ("")}
-              className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 cursor-pointer place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
-              aria-label="ล้างคำค้น"
-            >
-              <X className="size-4" />
-            </button>
-          )}
-        </div>
+        {searchBox}
         {view === "day" && (
           <div className="-mx-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0">
             {(
@@ -382,15 +514,13 @@ export function RentalsClient({
         />
       )}
 
+        </>
+      )}
+
       <RentalForm rental={editing} bikes={allBikes} onClose={() => setEditing(null)} />
       <RentDialog bike={renting} date={date} today={today} onClose={() => setRenting(null)} onSubmit={book} />
       <ReturnDialog
         rental={returning}
-        future={
-          returning
-            ? items.filter((x) => sameBooking(x, bookingOf(returning), returning.bikeId) && x.date > returning.date)
-            : []
-        }
         today={today}
         onClose={() => setReturning(null)}
         onSubmit={confirmReturn}
@@ -424,7 +554,8 @@ function DayBoard({
   onEdit: (r: Rental) => void;
   onReturn: (r: Rental, returned: boolean) => void;
 }) {
-  const todays = rentals.filter((r) => r.date === date);
+  // การเช่าที่รถออกไปในวันนี้ (เช่าหลายวันแสดงทุกวัน)
+  const todays = rentals.filter((r) => coversDay(r, date, today));
   // วันเดียวเช่าได้หลายรอบ (คืนแล้วเช่าต่อคนใหม่): การ์ดแสดงรอบที่ยังไม่คืน ไม่งั้นแสดงรอบล่าสุด
   const byBike = new Map<string, Rental>();
   const rounds = new Map<string, number>();
@@ -434,13 +565,17 @@ function DayBoard({
     if (!cur || cur.returnTime || !r.returnTime) byBike.set(r.bikeId, r);
   }
   const rented = bikes.filter((b) => byBike.has(b.id));
-  const returnedCount = rented.filter((b) => byBike.get(b.id)?.returnTime).length;
-  const revenue = todays.reduce((s, r) => s + r.total, 0);
+  const returnedCount = rented.filter((b) => {
+    const r = byBike.get(b.id);
+    return r && backOn(r, date);
+  }).length;
+  // รายได้นับที่วันเริ่มเช่า (เช่า 3 วันคิดยอดทั้งหมดในวันแรก)
+  const revenue = rentals.filter((r) => r.date === date).reduce((s, r) => s + r.total, 0);
   const now = nowTime();
-  /** วันที่เท่าไรของการเช่าครั้งนี้ เช่น 2/3 */
+  /** วันที่เท่าไรของการเช่าครั้งนี้ เช่น "วันที่ 2/3" (เลยวันที่คิดเงินแล้ว = ไม่แสดง) */
   const dayOf = (r: Rental) => {
-    const rows = rentals.filter((x) => sameBooking(x, bookingOf(r), r.bikeId)).map((x) => x.date).sort();
-    return rows.length > 1 ? `วันที่ ${rows.indexOf(r.date) + 1}/${rows.length}` : "";
+    const n = diffDays(r.date, date) + 1;
+    return r.days > 1 && n <= r.days ? `วันที่ ${n}/${r.days}` : "";
   };
 
   return (
@@ -464,7 +599,8 @@ function DayBoard({
           {shown.map((b) => {
             const r = byBike.get(b.id);
             const on = !!r;
-            const back = !!r?.returnTime;
+            // คืนแล้ว = คืนในวันนี้ (วันก่อนหน้าของการเช่าเดียวกัน ยังแสดงว่ากำลังเช่า)
+            const back = !!r && backOn(r, date);
             const saved = on && !r.id.startsWith("tmp-");
             const late = on && date === today ? overdueMinutes(r, today, now) : 0;
             const left = on && !back && date === today ? minutesUntilDue(r, today, now) : null;
@@ -527,7 +663,10 @@ function DayBoard({
                           {r.customer}
                         </span>
                       )}
-                      <span className="tabular font-semibold">{baht(r.total)}</span>
+                      <span className="tabular font-semibold">
+                        {baht(r.total)}
+                        {r.days > 1 && <span className="font-normal"> / {r.days} วัน</span>}
+                      </span>
                       {dayOf(r) && <span>{dayOf(r)}</span>}
                       {(rounds.get(b.id) ?? 0) > 1 && <span>รอบที่ {rounds.get(b.id)} วันนี้</span>}
                     </p>
@@ -541,7 +680,7 @@ function DayBoard({
                   </Button>
                 )}
                 </div>
-                {on && r.dueDate && !back && (
+                {on && r.dueDate && !back && !r.returnTime && (
                   <div
                     className={cn(
                       "flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm",
@@ -561,7 +700,7 @@ function DayBoard({
                     <div className="flex items-center justify-between gap-2 rounded-xl bg-surface/70 px-3 py-2 text-sm">
                       <span className="flex items-center gap-1.5 font-medium text-good">
                         <CheckCheck className="size-4" />
-                        คืนแล้ว {r.returnTime} น.
+                        คืนแล้ว {returnedText(r)} น.
                       </span>
                       <span className="flex items-center gap-3">
                         <button
@@ -618,14 +757,18 @@ function WeekGrid({
   onToggle: (b: Bike, d: string, rented: boolean) => void;
 }) {
   const { days } = rangeOf("week", date);
+  // ช่องที่รถออกไป: การเช่าหลายวันติ๊กทุกวัน
   const map = new Map<string, Rental[]>();
   for (const r of rentals) {
-    if (r.date < days[0] || r.date > days[6]) continue;
-    const k = `${r.bikeId}|${r.date}`;
-    map.set(k, [...(map.get(k) ?? []), r]);
+    for (const d of days) {
+      if (!coversDay(r, d, today)) continue;
+      const k = `${r.bikeId}|${d}`;
+      map.set(k, [...(map.get(k) ?? []), r]);
+    }
   }
-  const rowTotal = (b: Bike) => days.flatMap((d) => map.get(`${b.id}|${d}`) ?? []);
-  const grand = bikes.reduce((s, b) => s + rowTotal(b).reduce((x, r) => x + r.total, 0), 0);
+  // ยอดเงินนับที่วันเริ่มเช่า
+  const started = (b: Bike) => rentals.filter((r) => r.bikeId === b.id && r.date >= days[0] && r.date <= days[6]);
+  const grand = bikes.reduce((s, b) => s + started(b).reduce((x, r) => x + r.total, 0), 0);
 
   return (
     <Card className="overflow-hidden">
@@ -646,9 +789,8 @@ function WeekGrid({
           </thead>
           <tbody>
             {bikes.map((b) => {
-              const rows = rowTotal(b);
-              const dayCount = rows.reduce((s, r) => s + r.days, 0);
-              const total = rows.reduce((s, r) => s + r.total, 0);
+              const dayCount = days.filter((d) => map.get(`${b.id}|${d}`)?.some((r) => r.days > 0)).length;
+              const total = started(b).reduce((s, r) => s + r.total, 0);
               return (
                 <tr key={b.id} className="border-b border-line last:border-0">
                   <td className="sticky left-0 z-10 bg-surface px-4 py-2">
@@ -660,6 +802,9 @@ function WeekGrid({
                   {days.map((d) => {
                     const rs = map.get(`${b.id}|${d}`);
                     const on = !!rs?.some((r) => r.days > 0);
+                    const first = rs?.find((r) => !r.returnTime) ?? rs?.[0];
+                    // เลยวันที่คิดเงินแล้วยังไม่คืน = เลยกำหนด
+                    const over = !!first && !first.returnTime && d > billingEnd(first);
                     return (
                       <td key={d} className="p-1 text-center">
                         <button
@@ -668,19 +813,29 @@ function WeekGrid({
                           aria-label={`${b.plate} ${thShort(d)}`}
                           className={cn(
                             "mx-auto flex h-12 w-full max-w-20 cursor-pointer flex-col items-center justify-center rounded-xl text-xs transition active:scale-95",
-                            on
+                            over
+                              ? "bg-bad font-semibold text-white shadow-sm"
+                              : on
                               ? "bg-brand-2 font-semibold text-white shadow-sm"
                               : "border border-dashed border-line text-transparent hover:border-brand hover:text-brand",
                           )}
                         >
                           {on ? (
                             <>
-                              {rs?.some((r) => r.returnTime) ? (
+                              {rs?.some((r) => backOn(r, d)) ? (
                                 <CheckCheck className="size-4" strokeWidth={2.5} />
                               ) : (
                                 <Check className="size-4" strokeWidth={3} />
                               )}
-                              {rs?.[0]?.time && <span className="text-[10px] font-normal opacity-90">{rs[0].time}</span>}
+                              <span className="text-[10px] font-normal opacity-90">
+                                {over
+                                  ? "เลยกำหนด"
+                                  : first && first.date === d
+                                    ? first.time
+                                    : first && first.days > 1
+                                      ? `${diffDays(first.date, d) + 1}/${first.days}`
+                                      : ""}
+                              </span>
                             </>
                           ) : (
                             <Plus className="size-4" />
@@ -778,13 +933,13 @@ function MonthList({
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">{r.plate}</p>
                 <p className="truncate text-xs text-muted">
-                  {[r.time && `เวลา ${r.time}`, r.customer, r.note].filter(Boolean).join(" · ") || "—"}
+                  {[r.time && `เวลา ${r.time}`, r.days !== 1 && `${r.days} วัน`, r.customer, r.note].filter(Boolean).join(" · ") || "—"}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
                 <p className="tabular font-semibold">{baht(r.total)}</p>
                 <div className="flex gap-1">
-                  {r.returnTime && <Badge tone="good">คืน {r.returnTime}</Badge>}
+                  {r.returnTime && <Badge tone="good">คืน {returnedText(r)}</Badge>}
                   {!r.returnTime && r.dueDate && <Badge tone="brand">กำหนดคืน {thShort(r.dueDate)} {r.dueTime}</Badge>}
                   {r.discount > 0 && <Badge tone="good">ลด {baht(r.discount)}</Badge>}
                   {r.fine > 0 && <Badge tone="warn">ปรับ {baht(r.fine)}</Badge>}
@@ -875,7 +1030,10 @@ export function RentalForm({ rental, bikes, onClose }: { rental: Partial<Rental>
         <Field label="กำหนดคืน (เวลา)">
           <Input type="time" value={form.dueTime ?? ""} onChange={set("dueTime")} />
         </Field>
-        <Field label="เวลาคืนจริง (ว่าง = ยังไม่คืน)" className="col-span-2">
+        <Field label="วันที่คืนจริง">
+          <Input type="date" value={form.returnDate ?? ""} onChange={set("returnDate")} />
+        </Field>
+        <Field label="เวลาคืนจริง (ว่าง = ยังไม่คืน)">
           <Input type="time" value={form.returnTime ?? ""} onChange={set("returnTime")} />
         </Field>
         <Field label="จำนวนวัน">
@@ -1133,56 +1291,62 @@ function RentDialog({
 
 // ---------------------------------------------------------------- คืนรถ
 
-type ReturnInput = { time: string; discount: number; fine: number; note: string; removeFuture: boolean };
+type ReturnInput = { date: string; time: string; discount: number; fine: number; note: string; days: number };
 
 function ReturnDialog({
   rental,
-  future,
   today,
   onClose,
   onSubmit,
 }: {
   rental: Rental | null;
-  future: Rental[];
   today: string;
   onClose: () => void;
   onSubmit: (r: Rental, input: ReturnInput) => Promise<boolean>;
 }) {
-  const [form, setForm] = useState({ time: "", discount: "", fine: "", note: "", removeFuture: true });
+  // actual = คิดเงินตามวันที่ใช้จริง, booked = ตามที่ตกลงตอนเช่า
+  const [form, setForm] = useState({ date: "", time: "", discount: "", fine: "", note: "", charge: "booked" });
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<Rental | null>(null);
   if (rental !== last) {
     setLast(rental);
     if (rental) {
       setForm({
+        date: today,
         time: nowTime(),
         discount: rental.discount ? String(rental.discount) : "",
         fine: rental.fine ? String(rental.fine) : "",
         note: rental.note,
-        removeFuture: true,
+        charge: "booked",
       });
     }
   }
   if (!rental) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
 
-  const late = rental.dueDate ? overdueMinutes(rental, today, form.time || nowTime()) : 0;
-  const dayTotal = rentalTotal({
-    days: rental.days,
-    price: rental.price,
-    discount: Number(form.discount) || 0,
-    fine: Number(form.fine) || 0,
-  });
-  const futureTotal = future.reduce((s, f) => s + f.total, 0);
-  const valid = /^\d{1,2}:\d{2}$/.test(form.time) && Number(form.discount || 0) >= 0 && Number(form.fine || 0) >= 0;
+  const late = rental.dueDate ? overdueMinutes(rental, form.date || today, form.time || nowTime()) : 0;
+  const timeOk = /^\d{1,2}:\d{2}$/.test(form.time);
+  const used = form.date >= rental.date && timeOk ? usedDays(rental, form.date, form.time) : rental.days;
+  // จำนวนวันที่ใช้จริงไม่ตรงกับที่ตกลง (คืนก่อน/หลังกำหนด) → ให้เลือกคิดเงินแบบไหน
+  const differs = used !== rental.days;
+  const days = differs && form.charge === "actual" ? used : rental.days;
+  const totalFor = (n: number) =>
+    rentalTotal({ days: n, price: rental.price, discount: Number(form.discount) || 0, fine: Number(form.fine) || 0 });
+  const valid =
+    !!form.date &&
+    form.date >= rental.date &&
+    timeOk &&
+    Number(form.discount || 0) >= 0 &&
+    Number(form.fine || 0) >= 0;
 
   const submit = async () => {
     setBusy(true);
     const ok = await onSubmit(rental, {
+      date: form.date,
       time: form.time,
       discount: Number(form.discount) || 0,
       fine: Number(form.fine) || 0,
       note: form.note.trim(),
-      removeFuture: future.length > 0 && form.removeFuture,
+      days,
     });
     setBusy(false);
     if (ok) onClose();
@@ -1229,21 +1393,31 @@ function ReturnDialog({
           </p>
         )}
 
-        <Field label="เวลาที่คืน">
-          <Input type="time" value={form.time} onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))} />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="วันที่คืน">
+            <Input
+              type="date"
+              min={rental.date}
+              value={form.date}
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+            />
+          </Field>
+          <Field label="เวลาที่คืน">
+            <Input type="time" value={form.time} onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))} />
+          </Field>
+        </div>
 
-        {future.length > 0 && (
+        {differs && (
           <div>
             <p className="mb-2 text-xs font-medium text-ink-2">
-              คืนก่อนกำหนด — ยังมีบันทึกวันที่ {future.map((f) => thShort(f.date)).join(", ")} ({baht(futureTotal)})
+              {used < rental.days ? "คืนก่อนกำหนด" : "คืนช้ากว่ากำหนด"} — ตกลงไว้ {rental.days} วัน แต่ใช้จริง {used} วัน
             </p>
             <div className="flex gap-2">
-              {choice(form.removeFuture, "ลบวันที่เหลือ", "ไม่คิดเงินวันที่ยังไม่ได้ใช้", () =>
-                setForm((f) => ({ ...f, removeFuture: true })),
+              {choice(form.charge === "booked", `คิด ${rental.days} วัน ตามที่ตกลง`, baht(totalFor(rental.days)), () =>
+                setForm((f) => ({ ...f, charge: "booked" })),
               )}
-              {choice(!form.removeFuture, "คิดเงินเต็ม", `เก็บไว้ ${future.length} วัน`, () =>
-                setForm((f) => ({ ...f, removeFuture: false })),
+              {choice(form.charge === "actual", `คิด ${used} วัน ตามที่ใช้จริง`, baht(totalFor(used)), () =>
+                setForm((f) => ({ ...f, charge: "actual" })),
               )}
             </div>
           </div>
@@ -1281,16 +1455,177 @@ function ReturnDialog({
 
         <div className="flex items-center justify-between rounded-xl bg-good-soft px-4 py-3 text-good">
           <span className="text-sm">
-            ยอดวันที่ {thShort(rental.date)}
-            {!form.removeFuture && future.length > 0 && (
-              <span className="block text-xs opacity-80">+ วันที่เหลือ {baht(futureTotal)}</span>
-            )}
+            ยอดรวมการเช่านี้
+            <span className="block text-xs opacity-80">
+              {days} วัน × {baht(rental.price)}
+            </span>
           </span>
-          <span className="tabular text-xl font-bold">
-            {baht(dayTotal + (!form.removeFuture ? futureTotal : 0))}
-          </span>
+          <span className="tabular text-xl font-bold">{baht(totalFor(days))}</span>
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------- แท็บคืนรถ
+
+function bikeLabel(bikes: Bike[], id: string) {
+  const b = bikes.find((x) => x.id === id);
+  return b ? `${b.brand} ${b.model}` : "";
+}
+
+function ReturnTab({
+  outstanding,
+  returnedToday,
+  bikes,
+  today,
+  now,
+  searching,
+  onReturn,
+  onUnreturn,
+  onEdit,
+  onGoRent,
+}: {
+  outstanding: Rental[];
+  returnedToday: Rental[];
+  bikes: Bike[];
+  today: string;
+  now: string;
+  searching: boolean;
+  onReturn: (r: Rental) => void;
+  onUnreturn: (r: Rental) => void;
+  onEdit: (r: Rental) => void;
+  onGoRent: () => void;
+}) {
+  const late = outstanding.filter((r) => (minutesUntilDue(r, today, now) ?? 1) < 0).length;
+  return (
+    <div className="space-y-8">
+      <section>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-bold">ยังไม่คืน · {outstanding.length} คัน</h2>
+            <p className="text-sm text-muted">
+              {late > 0 ? <span className="font-semibold text-bad">เลยกำหนด {late} คัน · </span> : null}
+              เรียงจากคันที่ต้องคืนก่อน — กด “รับรถคืน” เมื่อลูกค้านำรถมาคืน
+            </p>
+          </div>
+        </div>
+        {outstanding.length === 0 ? (
+          <Card>
+            <Empty
+              icon={<KeyRound />}
+              image="/illustrations/scooter.svg"
+              title={searching ? "ไม่พบรถที่ค้นหาในรายการที่ยังไม่คืน" : "ไม่มีรถค้างคืน — รถกลับมาครบแล้ว"}
+              hint={searching ? "ลองค้นด้วยทะเบียนบางส่วน เช่น 8245" : undefined}
+            />
+            {!searching && (
+              <div className="-mt-6 pb-6 text-center">
+                <Button variant="secondary" onClick={onGoRent}>
+                  <Plus className="size-4" /> ไปแท็บเช่ารถ
+                </Button>
+              </div>
+            )}
+          </Card>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {outstanding.map((r) => {
+              const left = minutesUntilDue(r, today, now);
+              const tone = left == null ? "none" : left < 0 ? "late" : left <= 180 ? "soon" : "ok";
+              return (
+                <div
+                  key={r.id}
+                  className={cn(
+                    "flex flex-col gap-3 rounded-2xl border p-4",
+                    tone === "late"
+                      ? "border-bad/50 bg-bad-soft/60"
+                      : tone === "soon"
+                        ? "border-warn/50 bg-warn-soft/60"
+                        : "border-line bg-surface",
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-lg font-bold tracking-wide">{r.plate}</p>
+                      <p className="truncate text-sm text-muted">
+                        {bikeLabel(bikes, r.bikeId)}
+                        {r.customer && (
+                          <span className="ml-1 inline-flex items-center gap-1 text-ink-2">
+                            · <User className="size-3" /> {r.customer}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => onEdit(r)} aria-label="แก้ไขรายละเอียด">
+                      <Pencil className="size-4" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-xl bg-surface/70 px-3 py-2">
+                      <p className="text-[11px] text-muted">ยืมเมื่อ</p>
+                      <p className="font-medium">
+                        {thShort(r.date)} {r.time}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-surface/70 px-3 py-2">
+                      <p className="text-[11px] text-muted">กำหนดคืน</p>
+                      <p className={cn("font-medium", tone === "late" && "text-bad", tone === "soon" && "text-warn")}>
+                        {r.dueDate ? dueText(r.dueDate, r.dueTime, today) : "ไม่ได้กำหนด"}
+                      </p>
+                    </div>
+                  </div>
+                  {left != null && (
+                    <p
+                      className={cn(
+                        "flex items-center gap-1.5 text-sm font-semibold",
+                        tone === "late" ? "text-bad" : tone === "soon" ? "text-warn" : "text-ink-2",
+                      )}
+                    >
+                      <AlarmClock className="size-4" />
+                      {left < 0 ? `เลยกำหนดมา ${durationText(-left)}` : `อีก ${durationText(left)} ถึงเวลาคืน`}
+                    </p>
+                  )}
+                  <Button size="lg" className="w-full" onClick={() => onReturn(r)}>
+                    <KeyRound className="size-5" /> รับรถคืน
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-bold">คืนแล้ววันนี้ · {returnedToday.length} คัน</h2>
+        {returnedToday.length === 0 ? (
+          <p className="text-sm text-muted">ยังไม่มีรถคืนวันนี้</p>
+        ) : (
+          <Card className="divide-y divide-line overflow-hidden">
+            {returnedToday.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-good-soft text-good">
+                  <CheckCheck className="size-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">
+                    {r.plate} <span className="text-xs font-normal text-muted">{bikeLabel(bikes, r.bikeId)}</span>
+                  </p>
+                  <p className="truncate text-xs text-muted">
+                    ยืม {thShort(r.date)} {r.time} · คืน {returnedText(r)}
+                    {r.customer && ` · ${r.customer}`}
+                  </p>
+                </div>
+                <span className="tabular text-sm font-semibold">{baht(r.total)}</span>
+                <button
+                  onClick={() => onUnreturn(r)}
+                  className="flex cursor-pointer items-center gap-1 text-xs text-muted hover:text-ink"
+                >
+                  <Undo2 className="size-3.5" /> ยกเลิกการคืน
+                </button>
+              </div>
+            ))}
+          </Card>
+        )}
+      </section>
+    </div>
   );
 }

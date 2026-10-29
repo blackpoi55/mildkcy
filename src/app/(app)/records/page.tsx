@@ -4,7 +4,8 @@ import { PageHeader } from "@/components/nav";
 import { Skeleton } from "@/components/ui";
 import { getBikes, getLaundry, getRentals, getSettings } from "@/lib/data";
 import { addDays, isISODate, startOfMonth, todayISO } from "@/lib/dates";
-import { RecordsClient, type RecordsTab } from "./records-client";
+import { returnDateOf } from "@/lib/rental-status";
+import { RecordsClient, type RecordsTab, type RentBasis } from "./records-client";
 
 export const metadata = { title: "รายการทั้งหมด" };
 
@@ -13,6 +14,7 @@ async function RecordsData({ searchParams }: { searchParams: PageProps<"/records
   await connection();
   const today = todayISO();
   const tab: RecordsTab = sp.tab === "laundry" ? "laundry" : "rent";
+  const by: RentBasis = sp.by === "due" || sp.by === "return" ? sp.by : "rent";
   // ช่วงวันที่: ค่าเริ่มต้น = เดือนนี้, all=1 = ทั้งหมด
   const all = sp.all === "1";
   const from = all ? "" : isISODate(sp.from) ? sp.from : startOfMonth(today);
@@ -26,7 +28,12 @@ async function RecordsData({ searchParams }: { searchParams: PageProps<"/records
       from={from}
       to={to}
       today={today}
-      rentals={rentals.filter((r) => inRange(r.date))}
+      by={by}
+      rentals={rentals.filter((r) => {
+        // กรองตามวันที่ที่เลือก: วันที่ยืม / วันที่ต้องคืน / วันที่คืนจริง
+        const d = by === "rent" ? r.date : by === "due" ? r.dueDate : returnDateOf(r);
+        return !!d && inRange(d);
+      })}
       laundry={laundry.filter((l) => inRange(l.date))}
       bikes={bikes}
       settings={settings}

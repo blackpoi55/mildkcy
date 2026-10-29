@@ -31,6 +31,7 @@ export const TABLES = {
       { key: "time", label: "เวลา" },
       { key: "dueDate", label: "กำหนดคืน (วันที่)", type: "date" },
       { key: "dueTime", label: "กำหนดคืน (เวลา)" },
+      { key: "returnDate", label: "วันที่คืนจริง", type: "date" },
       { key: "returnTime", label: "เวลาคืนจริง" },
       { key: "bookingId", label: "bookingId" },
       { key: "bikeId", label: "bikeId" },
@@ -95,6 +96,8 @@ export type Rental = {
   /** กำหนดคืนรถ (วันที่ + เวลา) — ข้อมูลเก่าจาก Excel จะว่าง */
   dueDate: string;
   dueTime: string;
+  /** วันที่ลูกค้านำรถมาคืนจริง (คืนข้ามวันได้) — ข้อมูลก่อนมีช่องนี้จะว่าง ให้ถือเป็นวันที่ยืม */
+  returnDate: string;
   /** เวลาที่ลูกค้านำรถมาคืนจริง — ว่าง = ยังไม่คืน */
   returnTime: string;
   /** การเช่าครั้งเดียวกัน (หลายวัน = หลายแถว) ใช้ id ร่วมกัน; ข้อมูลเก่าว่าง */

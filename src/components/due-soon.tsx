@@ -84,7 +84,7 @@ export function DueSoon({
           href={href}
           className="flex items-center justify-between border-t border-line px-5 py-2.5 text-sm font-medium text-brand hover:bg-surface-2/60"
         >
-          ไปหน้าบันทึกเช่ารถเพื่อกดคืนรถ
+          ไปแท็บคืนรถ
           <ArrowRight className="size-4" />
         </Link>
       )}
