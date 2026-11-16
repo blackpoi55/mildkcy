@@ -160,3 +160,34 @@ dialog::backdrop {
 .animate-pop {
   animation: pop 0.18s ease-out;
 }
+
+/* พิมพ์ / บันทึก PDF (หน้าสรุปรายรับ): กระดาษ A4 พื้นขาว ซ่อนเมนูและพื้นหลัง */
+@page {
+  size: A4;
+  margin: 12mm;
+}
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    color: #0f1729 !important;
+  }
+  .app-bg,
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+  .report {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* หัวตารางซ้ำทุกหน้า แต่แถวรวมแสดงครั้งเดียวท้ายตาราง (ไม่งั้นดูเหมือนยอดรวมของแต่ละหน้า) */
+  .report thead {
+    display: table-header-group;
+  }
+  .report tfoot {
+    display: table-row-group;
+  }
+  .report tr {
+    break-inside: avoid;
+  }
+}

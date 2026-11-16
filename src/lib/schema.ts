@@ -60,6 +60,20 @@ export const TABLES = {
       { key: "createdAt", label: "สร้างเมื่อ" },
     ],
   },
+  /** เงินที่หยิบจากเงินสดไปใช้ (ซื้อของ/จ่ายค่าต่างๆ) — หักออกจากยอดที่นำส่งหัวหน้า */
+  expenses: {
+    sheet: "เบิกเงิน",
+    columns: [
+      { key: "id", label: "id" },
+      { key: "date", label: "วันที่", type: "date" },
+      { key: "time", label: "เวลา" },
+      { key: "item", label: "รายการ" },
+      { key: "amount", label: "จำนวนเงิน", type: "number" },
+      { key: "by", label: "ผู้เบิก" },
+      { key: "note", label: "หมายเหตุ" },
+      { key: "createdAt", label: "สร้างเมื่อ" },
+    ],
+  },
   settings: {
     sheet: "ตั้งค่า",
     columns: [
@@ -126,6 +140,17 @@ export type Laundry = {
   createdAt: string;
 };
 
+export type Expense = {
+  id: string;
+  date: string;
+  time: string;
+  item: string;
+  amount: number;
+  by: string;
+  note: string;
+  createdAt: string;
+};
+
 export type Setting = { id: string; value: string };
 
 export type RowOf<T extends TableName> = T extends "bikes"
@@ -134,7 +159,9 @@ export type RowOf<T extends TableName> = T extends "bikes"
     ? Rental
     : T extends "laundry"
       ? Laundry
-      : Setting;
+      : T extends "expenses"
+        ? Expense
+        : Setting;
 
 export const BIKE_STATUSES = ["เช่า", "Resort", "ซาเล้ง", "ซ่อม", "ซากรถ", "ขายแล้ว"] as const;
 /** สถานะที่นับว่าเป็นรถพร้อมให้เช่า (ใช้คำนวณอัตราการใช้รถ) */

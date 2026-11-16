@@ -10,7 +10,7 @@ import { getSettings } from "@/lib/data";
 import type { LaundryPrice } from "@/lib/laundry";
 import { addDays, diffDays, isISODate, nowTime, todayISO } from "@/lib/dates";
 import { lastDayOut, planDay, resized } from "@/lib/rental-status";
-import { bookingOf, rentalTotal, type Bike, type Laundry, type Rental } from "@/lib/schema";
+import { bookingOf, rentalTotal, type Bike, type Expense, type Laundry, type Rental } from "@/lib/schema";
 import { getStore, newId } from "@/lib/store";
 
 export type Result<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
@@ -384,6 +384,48 @@ export async function restoreLaundry(rows: Laundry[]) {
 export async function setLaundryPaid(ids: string[], paid: boolean) {
   return guard(async () => {
     await getStore().updateMany("laundry", ids.map((id) => ({ id, patch: { paid } })));
+  });
+}
+
+// ---------------------------------------------------------------- เบิกเงิน
+
+export async function saveExpense(input: Partial<Expense>) {
+  return guard(async () => {
+    if (!isISODate(input.date)) throw new Error("กรุณาเลือกวันที่");
+    const item = str(input.item);
+    if (!item) throw new Error("กรุณาระบุว่าเบิกไปทำอะไร");
+    const amount = num(input.amount);
+    if (amount <= 0) throw new Error("กรุณาระบุจำนวนเงิน");
+    const row: Expense = {
+      id: input.id || newId(),
+      date: input.date,
+      time: str(input.time) || nowTime(),
+      item,
+      amount,
+      by: str(input.by),
+      note: str(input.note),
+      createdAt: input.createdAt || now(),
+    };
+    const store = getStore();
+    if (input.id) await store.update("expenses", input.id, row);
+    else await store.insert("expenses", [row]);
+  });
+}
+
+/** ลบแล้วคืนรายการที่ลบไว้ ให้กดเลิกทำได้ */
+export async function deleteExpense(id: string) {
+  return guard(async () => {
+    const row = (await getStore().all("expenses")).find((e) => e.id === id);
+    await getStore().remove("expenses", [id]);
+    return row;
+  });
+}
+
+export async function restoreExpense(row: Expense) {
+  return guard(async () => {
+    const store = getStore();
+    if ((await store.all("expenses")).some((e) => e.id === row.id)) return;
+    await store.insert("expenses", [row]);
   });
 }
 

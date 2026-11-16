@@ -21,6 +21,11 @@ export async function getLaundry() {
   return getStore().all("laundry");
 }
 
+export async function getExpenses() {
+  await connection();
+  return getStore().all("expenses");
+}
+
 export async function getSettings(): Promise<AppSettings> {
   await connection();
   const rows = await getStore().all("settings");

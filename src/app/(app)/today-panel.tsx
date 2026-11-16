@@ -1,4 +1,4 @@
-import { AlarmClock, ArrowRight, Bike, CheckCircle2, Clock, Shirt, User } from "lucide-react";
+import { AlarmClock, ArrowRight, Bike, CheckCircle2, Clock, ReceiptText, Shirt, User } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Badge, Card } from "@/components/ui";
@@ -106,7 +106,18 @@ export function TodayPanel({
             {dateLabel} · รายได้รวม <b className="tabular text-ink">{baht(rentTotal + washTotal)}</b>
           </p>
         </div>
-        <LiveBadge updatedAt={updatedAt} stale={stale} />
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <Link
+              href={`/report?d=${today}`}
+              className="flex items-center gap-1.5 rounded-xl border border-line bg-surface px-3 py-1.5 text-sm font-medium text-brand hover:bg-surface-2"
+            >
+              <ReceiptText className="size-4" />
+              สรุปรายรับ / PDF
+            </Link>
+          )}
+          <LiveBadge updatedAt={updatedAt} stale={stale} />
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

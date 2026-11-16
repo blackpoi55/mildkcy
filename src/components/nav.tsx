@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Bike, CalendarCheck, ClipboardList, Download, LayoutDashboard, LogIn, LogOut, Settings, Shirt, TreePalm } from "lucide-react";
+import { Bike, CalendarCheck, ClipboardList, Download, LayoutDashboard, LogIn, LogOut, ReceiptText, Settings, Shirt, TreePalm } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions";
@@ -12,11 +12,12 @@ const MEMBER_LINKS = [
   { href: "/rentals", label: "บันทึกเช่ารถ", short: "เช่ารถ", icon: CalendarCheck },
   { href: "/laundry", label: "ซักผ้า", short: "ซักผ้า", icon: Shirt },
   { href: "/records", label: "รายการทั้งหมด", short: "รายการ", icon: ClipboardList },
+  { href: "/report", label: "สรุปรายรับรายวัน", short: "สรุปรายรับ", icon: ReceiptText },
   { href: "/bikes", label: "ทะเบียนรถ", short: "รถ", icon: Bike },
   { href: "/settings", label: "ตั้งค่า", short: "ตั้งค่า", icon: Settings },
 ];
-/** แถบล่างบนมือถือมีที่ 5 ปุ่ม — ตั้งค่าย้ายไปเป็นไอคอนเฟืองที่แถบบน */
-const MOBILE_HIDDEN = new Set(["/settings"]);
+/** แถบล่างบนมือถือมีที่ 5 ปุ่ม — ตั้งค่า / สรุปรายรับ ย้ายไปเป็นไอคอนที่แถบบน */
+const MOBILE_HIDDEN = new Set(["/settings", "/report"]);
 
 // ผู้ที่ยังไม่ล็อกอินเห็นแค่แดชบอร์ด (อ่านอย่างเดียว)
 const GUEST_LINKS = [
@@ -60,7 +61,7 @@ export function Sidebar({ authed, canLogout }: NavProps) {
       active ? "bg-brand-soft text-brand-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
     );
   return (
-    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface/80 px-4 py-6 backdrop-blur-xl lg:flex">
+    <aside className="sticky top-0 hidden h-dvh w-64 print:hidden! shrink-0 flex-col border-r border-line bg-surface/80 px-4 py-6 backdrop-blur-xl lg:flex">
       <Link href="/" className="mb-8 flex items-center gap-3 px-2">
         <Logo />
         <div className="min-w-0">
@@ -101,7 +102,7 @@ export function Sidebar({ authed, canLogout }: NavProps) {
 export function MobileTopBar({ authed, canLogout }: NavProps) {
   const icon = "grid size-9 place-items-center rounded-xl text-ink-2 hover:bg-surface-2";
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-surface/90 pt-[env(safe-area-inset-top)] backdrop-blur-lg lg:hidden">
+    <header className="sticky top-0 z-30 print:hidden border-b border-line bg-surface/90 pt-[env(safe-area-inset-top)] backdrop-blur-lg lg:hidden">
       <div className="flex items-center gap-2.5 px-4 py-2.5">
         <Link href="/" className="flex min-w-0 flex-1 items-center gap-2.5">
           <Logo size="sm" />
@@ -111,6 +112,11 @@ export function MobileTopBar({ authed, canLogout }: NavProps) {
           <span className="shrink-0 text-xs text-muted max-sm:hidden">เกาะช้าง</span>
         </Link>
         <ThemeButton />
+        {authed && (
+          <Link href="/report" className={icon} aria-label="สรุปรายรับรายวัน">
+            <ReceiptText className="size-[18px]" />
+          </Link>
+        )}
         {authed && (
           <Link href="/settings" className={icon} aria-label="ตั้งค่า">
             <Settings className="size-[18px]" />
@@ -142,7 +148,7 @@ export function BottomNav({ authed }: NavProps) {
   const isActive = useActive();
   const links = linksFor(authed).filter((l) => !MOBILE_HIDDEN.has(l.href));
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 print:hidden border-t border-line bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg lg:hidden">
       <div className="mx-auto grid max-w-lg" style={{ gridTemplateColumns: `repeat(${links.length}, minmax(0, 1fr))` }}>
         {links.map(({ href, short, icon: Icon }) => (
           <Link
