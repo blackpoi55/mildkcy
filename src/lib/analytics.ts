@@ -111,17 +111,30 @@ export function buildDashboard(
 
   // รถทำเงินสูงสุดในช่วง (นับตามวันที่ได้เงิน รวมต่อเวลา / เก็บเพิ่มตอนคืนของการเช่าก่อนหน้า)
   const bikeById = new Map(bikes.map((b) => [b.id, b]));
-  const topMap = new Map<string, { id: string; plate: string; model: string; revenue: number; days: number; later: number }>();
+  type TopBike = { id: string; plate: string; model: string; revenue: number; days: number; extend: number; atReturn: number };
+  const topMap = new Map<string, TopBike>();
   for (const r of rentals) {
     const started = r.date >= start && r.date <= end;
     const cash = rentCashIn(r, start, end);
     if (!started && !cash) continue;
     const b = bikeById.get(r.bikeId);
-    const t =
-      topMap.get(r.bikeId) ?? { id: r.bikeId, plate: r.plate, model: b ? `${b.brand} ${b.model}` : "", revenue: 0, days: 0, later: 0 };
+    const t: TopBike = topMap.get(r.bikeId) ?? {
+      id: r.bikeId,
+      plate: r.plate,
+      model: b ? `${b.brand} ${b.model}` : "",
+      revenue: 0,
+      days: 0,
+      extend: 0,
+      atReturn: 0,
+    };
     t.revenue += cash;
     if (started) t.days += r.days;
-    else t.later += cash;
+    // เงินที่รับหลังวันเช่าในช่วงนี้ แยกเป็นต่อเวลา / เก็บเพิ่มตอนคืน (แสดงป้ายในรายการรถ)
+    for (const p of laterPayments(r)) {
+      if (p.date < start || p.date > end) continue;
+      if (p.date === returnDateOf(r)) t.atReturn += p.amount;
+      else t.extend += p.amount;
+    }
     topMap.set(r.bikeId, t);
   }
   const topBikes = [...topMap.values()].sort((a, b) => b.revenue - a.revenue);

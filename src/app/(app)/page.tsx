@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Bike, CalendarCheck, CircleX, Eye, Gauge, Shirt, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Bike, CalendarCheck, CalendarPlus, CircleX, Eye, Gauge, Shirt, Wallet } from "lucide-react";
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
@@ -174,19 +174,24 @@ function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: 
                     <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
                       <span className="truncate">
                         <span className="font-semibold">{b.plate}</span> <span className="text-xs text-muted">{b.model}</span>
-                        {b.later !== 0 && (
-                          <Badge tone="brand" className="ml-1.5">
-                            ต่อเวลา/เก็บเพิ่ม {signed(b.later)}
-                          </Badge>
-                        )}
                       </span>
                       <span className="tabular shrink-0 font-semibold">{baht(b.revenue)}</span>
                     </div>
+                    {(b.extend !== 0 || b.atReturn !== 0) && (
+                      <div className="mb-1.5 flex flex-wrap gap-1.5">
+                        {b.extend !== 0 && (
+                          <Badge tone="brand">
+                            <CalendarPlus className="size-3" /> ต่อเวลา {signed(b.extend)}
+                          </Badge>
+                        )}
+                        {b.atReturn !== 0 && <Badge tone="brand">เก็บตอนคืน {signed(b.atReturn)}</Badge>}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                         <div className="h-full rounded-full bg-rent" style={{ width: `${(b.revenue / maxBike) * 100}%` }} />
                       </div>
-                      <span className="tabular w-12 text-right text-xs text-muted">{b.days ? `${number(b.days)} วัน` : "-"}</span>
+                      <span className="tabular w-14 text-right text-xs text-muted">{b.days ? `${number(b.days)} วัน` : b.extend ? "ต่อเวลา" : "คืนรถ"}</span>
                     </div>
                   </li>
                 ))}
