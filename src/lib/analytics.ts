@@ -1,6 +1,6 @@
 import { addDays, addMonths, dayOfWeek, diffDays, rangeOf, shift, startOfMonth, thShort, TH_DAYS_SHORT, TH_MONTHS_SHORT, type Period } from "./dates";
 import { expiryState } from "./expiry";
-import { coversDay, laterPayments, paidAtRent, rentCashIn } from "./rental-status";
+import { coversDay, laterPayments, paidAtRent, rentCashIn, returnDateOf } from "./rental-status";
 import { RENTABLE_STATUS, type Bike, type Laundry, type Rental } from "./schema";
 
 export type DayPoint = { date: string; label: string; rent: number; laundry: number; bikes: number };
@@ -15,9 +15,22 @@ function totals(rentals: Rental[], laundry: Laundry[], start: string, end: strin
   const l = laundry.filter((x) => x.date >= start && x.date <= end);
   const days = diffDays(start, end) + 1;
   const bikeDays = sumBy(r, (x) => x.days);
+  // เงินที่รับหลังวันเช่าในช่วงนี้: วันที่คืนรถ = เก็บเพิ่มตอนคืน, วันอื่น = ต่อเวลา / แก้ยอด
+  let rentExtend = 0;
+  let rentAtReturn = 0;
+  for (const x of rentals) {
+    for (const p of laterPayments(x)) {
+      if (p.date < start || p.date > end) continue;
+      if (p.date === returnDateOf(x)) rentAtReturn += p.amount;
+      else rentExtend += p.amount;
+    }
+  }
   return {
-    // รายได้ตามวันที่ได้เงิน (ค่าปรับ/วันที่เกินที่เก็บตอนคืนรถนับวันที่คืน)
+    // รายได้ตามวันที่ได้เงิน (ต่อเวลา / ค่าปรับที่เก็บตอนคืนรถ นับวันที่รับเงิน)
     rent: sumBy(rentals, (x) => rentCashIn(x, start, end)),
+    rentNew: sumBy(r, (x) => paidAtRent(x)),
+    rentExtend,
+    rentAtReturn,
     laundry: sumBy(l, (x) => x.price),
     bikeDays,
     occupancy: rentableBikes ? (bikeDays / (rentableBikes * days)) * 100 : 0,
@@ -96,14 +109,19 @@ export function buildDashboard(
     if (m) m.laundry += l.price;
   }
 
-  // รถทำเงินสูงสุดในช่วง
+  // รถทำเงินสูงสุดในช่วง (นับตามวันที่ได้เงิน รวมต่อเวลา / เก็บเพิ่มตอนคืนของการเช่าก่อนหน้า)
   const bikeById = new Map(bikes.map((b) => [b.id, b]));
-  const topMap = new Map<string, { id: string; plate: string; model: string; revenue: number; days: number }>();
-  for (const r of cur.rentals) {
+  const topMap = new Map<string, { id: string; plate: string; model: string; revenue: number; days: number; later: number }>();
+  for (const r of rentals) {
+    const started = r.date >= start && r.date <= end;
+    const cash = rentCashIn(r, start, end);
+    if (!started && !cash) continue;
     const b = bikeById.get(r.bikeId);
-    const t = topMap.get(r.bikeId) ?? { id: r.bikeId, plate: r.plate, model: b ? `${b.brand} ${b.model}` : "", revenue: 0, days: 0 };
-    t.revenue += r.total;
-    t.days += r.days;
+    const t =
+      topMap.get(r.bikeId) ?? { id: r.bikeId, plate: r.plate, model: b ? `${b.brand} ${b.model}` : "", revenue: 0, days: 0, later: 0 };
+    t.revenue += cash;
+    if (started) t.days += r.days;
+    else t.later += cash;
     topMap.set(r.bikeId, t);
   }
   const topBikes = [...topMap.values()].sort((a, b) => b.revenue - a.revenue);

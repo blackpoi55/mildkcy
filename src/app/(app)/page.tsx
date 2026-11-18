@@ -65,6 +65,8 @@ function Kpi({
   );
 }
 
+const signed = (n: number) => `${n < 0 ? "-" : "+"}${baht(Math.abs(n))}`;
+
 function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: boolean }) {
   const { cur, prev, period } = d;
   const maxBike = Math.max(1, ...d.topBikes.map((b) => b.revenue));
@@ -96,7 +98,18 @@ function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: 
           icon={<Bike className="size-4" />}
           label="เช่ารถ"
           value={baht(cur.rent)}
-          sub={<Delta cur={cur.rent} prev={prev.rent} period={period} />}
+          sub={
+            <>
+              <Delta cur={cur.rent} prev={prev.rent} period={period} />
+              {(cur.rentExtend !== 0 || cur.rentAtReturn !== 0) && (
+                <span className="mt-0.5 block text-xs text-muted">
+                  เช่าใหม่ {baht(cur.rentNew)}
+                  {cur.rentExtend !== 0 && <b className="text-brand"> · ต่อเวลา {signed(cur.rentExtend)}</b>}
+                  {cur.rentAtReturn !== 0 && <b className="text-brand"> · เก็บตอนคืน {signed(cur.rentAtReturn)}</b>}
+                </span>
+              )}
+            </>
+          }
           tint="bg-rent/15 text-rent"
         />
         <Kpi
@@ -161,6 +174,11 @@ function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: 
                     <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
                       <span className="truncate">
                         <span className="font-semibold">{b.plate}</span> <span className="text-xs text-muted">{b.model}</span>
+                        {b.later !== 0 && (
+                          <Badge tone="brand" className="ml-1.5">
+                            ต่อเวลา/เก็บเพิ่ม {signed(b.later)}
+                          </Badge>
+                        )}
                       </span>
                       <span className="tabular shrink-0 font-semibold">{baht(b.revenue)}</span>
                     </div>
@@ -168,7 +186,7 @@ function Content({ d, today, canEdit }: { d: Dashboard; today: string; canEdit: 
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                         <div className="h-full rounded-full bg-rent" style={{ width: `${(b.revenue / maxBike) * 100}%` }} />
                       </div>
-                      <span className="tabular w-12 text-right text-xs text-muted">{number(b.days)} วัน</span>
+                      <span className="tabular w-12 text-right text-xs text-muted">{b.days ? `${number(b.days)} วัน` : "-"}</span>
                     </div>
                   </li>
                 ))}
