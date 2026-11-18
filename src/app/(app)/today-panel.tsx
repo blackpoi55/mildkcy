@@ -1,10 +1,10 @@
-import { AlarmClock, ArrowRight, Bike, CheckCircle2, Clock, ReceiptText, Shirt, User } from "lucide-react";
+import { AlarmClock, ArrowRight, Bike, CalendarPlus, CheckCircle2, Clock, ReceiptText, Shirt, User } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Badge, Card } from "@/components/ui";
 import { nowTime } from "@/lib/dates";
 import { baht, number } from "@/lib/format";
-import { durationText, dueText, overdueMinutes, rentCashIn, returnedText } from "@/lib/rental-status";
+import { durationText, dueText, laterPayments, overdueMinutes, rentCashIn, returnedText } from "@/lib/rental-status";
 import type { Bike as BikeRow, Laundry, Rental } from "@/lib/schema";
 import { LiveBadge } from "./live";
 
@@ -92,6 +92,14 @@ export function TodayPanel({
   const free = bikes.filter((b) => b.status === "เช่า" && !outIds.has(b.id));
   // รายได้นับตามวันที่ได้เงิน: ค่าเช่าวันที่ปล่อยรถ + ส่วนที่เก็บเพิ่ม/คืนให้ตอนคืนรถวันนี้
   const rentTotal = rentals.reduce((s, r) => s + rentCashIn(r, today), 0);
+  // แยกที่มาของรายได้วันนี้: เช่าใหม่ / ต่อเวลา (ยังไม่คืน) / เก็บเพิ่มตอนคืนรถ — ของการเช่าที่เริ่มวันอื่น
+  const paidToday = (r: Rental) =>
+    r.date === today ? 0 : laterPayments(r).reduce((s, p) => s + (p.date === today ? p.amount : 0), 0);
+  const extended = out.filter((r) => paidToday(r));
+  const extendTotal = extended.reduce((s, r) => s + paidToday(r), 0);
+  const atReturn = returned.reduce((s, r) => s + paidToday(r), 0);
+  const newRentTotal = rentTotal - extendTotal - atReturn;
+  const signed = (n: number) => `${n < 0 ? "-" : "+"}${baht(Math.abs(n))}`;
   const wash = [...laundry].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   const washTotal = wash.reduce((s, l) => s + l.price, 0);
   const washKg = wash.reduce((s, l) => s + l.kg, 0);
@@ -128,8 +136,16 @@ export function TodayPanel({
           big={`${out.length} / ${rentableCount} คัน`}
           sub={
             <>
-              เช่าใหม่วันนี้ {rentedToday.filter((r) => r.date === today).length} ครั้ง · คืนแล้ว {returned.length} · รายได้ {baht(rentTotal)}
+              เช่าใหม่วันนี้ {rentedToday.filter((r) => r.date === today).length} ครั้ง
+              {extended.length > 0 && ` · ต่อเวลา ${extended.length} คัน`} · คืนแล้ว {returned.length} · รายได้ {baht(rentTotal)}
               {lateCount > 0 && <span className="font-semibold text-bad"> · เลยกำหนด {lateCount} คัน</span>}
+              {(extendTotal !== 0 || atReturn !== 0) && (
+                <span className="block">
+                  แยก: เช่าใหม่ {baht(newRentTotal)}
+                  {extendTotal !== 0 && <b className="text-brand"> · ต่อเวลา {signed(extendTotal)}</b>}
+                  {atReturn !== 0 && <b className="text-brand"> · เก็บเพิ่มตอนคืน {signed(atReturn)}</b>}
+                </span>
+              )}
             </>
           }
           href={canEdit ? `/rentals?d=${today}` : undefined}
@@ -163,6 +179,11 @@ export function TodayPanel({
                     </div>
                     <div className="flex flex-col items-end gap-0.5">
                       <span className="tabular text-sm font-semibold">{baht(r.total)}</span>
+                      {paidToday(r) !== 0 && (
+                        <Badge tone="brand">
+                          <CalendarPlus className="size-3" /> ต่อเวลา {signed(paidToday(r))} วันนี้
+                        </Badge>
+                      )}
                       {late > 0 ? (
                         <Badge tone="bad">
                           <AlarmClock className="size-3" /> เลยกำหนด {durationText(late)}
