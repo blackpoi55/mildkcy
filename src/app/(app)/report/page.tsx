@@ -44,7 +44,7 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub: 
 
 function Section({ no, title, note, children }: { no: number; title: string; note: string; children: ReactNode }) {
   return (
-    <section className="mt-7 print:mt-3.5">
+    <section className="mt-7 print:mt-3">
       <div className="mb-2 flex break-after-avoid items-baseline justify-between gap-3 border-b-2 border-slate-800 pb-1.5">
         <h3 className="text-[15px] font-bold">
           <span className="mr-1.5 text-indigo-600">{no}.</span>
@@ -199,11 +199,9 @@ function LaterTable({ rows, date, model }: { rows: Rental[]; date: string; model
               </td>
               <td className={`${td} text-slate-600`}>
                 {number(r.days, 1)} วัน × {baht(r.price)}
-                {r.discount > 0 && ` · ส่วนลด ${baht(r.discount)}`}
-                {r.fine > 0 && ` · ค่าปรับ ${baht(r.fine)}`}
-                <p className="text-[10px]">
-                  ยอดรวม {baht(r.total)} · รับตอนเช่า {baht(paidAtRent(r))}
-                </p>
+                {r.discount > 0 && ` − ${baht(r.discount)}`}
+                {r.fine > 0 && ` + ปรับ ${baht(r.fine)}`} = {baht(r.total)}
+                <p className="text-[10px]">รับตอนเช่า {baht(paidAtRent(r))}</p>
               </td>
               <td className={`${td} ${num} font-semibold ${today(r) > 0 ? "text-emerald-700" : "text-rose-600"}`}>
                 {signed(today(r))}
@@ -355,9 +353,6 @@ function SignBox({ title, amountLine }: { title: string; amountLine?: boolean })
           ( <span className="w-44 border-b border-dotted border-slate-400" /> )
         </p>
         <p className={line}>
-          ตำแหน่ง <span className={dots} />
-        </p>
-        <p className={line}>
           วันที่ <span className={dots} />
         </p>
       </div>
@@ -423,7 +418,7 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
         {/* หัวรายงาน */}
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white">
+            <span className="grid size-12 shrink-0 place-items-center print:size-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white">
               <TreePalm className="size-6" />
             </span>
             <div>
@@ -432,14 +427,14 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
             </div>
           </div>
           <div className="sm:text-right print:text-right">
-            <h2 className="text-xl font-bold text-indigo-700">รายงานสรุปรายรับประจำวัน</h2>
+            <h2 className="text-xl font-bold text-indigo-700 print:text-lg">รายงานสรุปรายรับประจำวัน</h2>
             <p className="text-sm font-medium">{dayLabel}</p>
             <p className="text-[11px] text-slate-500">
               เลขที่ PPR-{date.replaceAll("-", "")} · พิมพ์เมื่อ {thShort(today)} {nowTime()} น.
             </p>
           </div>
         </header>
-        <div className="mt-4 h-1 rounded-full bg-gradient-to-r from-indigo-600 via-violet-500 to-sky-400" />
+        <div className="mt-4 h-1 rounded-full print:mt-3 bg-gradient-to-r from-indigo-600 via-violet-500 to-sky-400" />
 
         {/* สรุปยอด */}
         <div className="mt-6 grid gap-3 sm:grid-cols-3 print:mt-4 print:grid-cols-3">
@@ -461,29 +456,23 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
         <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
           <table className="w-full text-sm">
             <tbody>
-              {/* รายรับแยกประเภทอยู่ในกล่องด้านบนแล้ว — ตรงนี้แสดงแค่ รวมรายรับ − รายการหัก = ยอดนำส่ง */}
-              {(received > 0 || unpaid > 0 || spent > 0) && (
-                <tr className="border-b border-slate-200">
-                  <td className="px-4 py-2 print:py-1.5 text-slate-600">รวมรายรับทั้งสิ้น</td>
-                  <td className="tabular px-4 py-2 print:py-1.5 text-right">{baht(grand)}</td>
-                </tr>
-              )}
+              {/* รวมรายรับอยู่ในกล่องสีม่วงด้านบนแล้ว — ตรงนี้แสดงเฉพาะรายการบวก/หัก แล้วจบที่ยอดนำส่ง */}
               {received > 0 && (
                 <tr className="border-b border-slate-200">
-                  <td className="px-4 py-2 print:py-1.5 text-emerald-700">บวก รับเงินเพิ่ม ({ins.length} รายการ)</td>
-                  <td className="tabular px-4 py-2 print:py-1.5 text-right text-emerald-700">+{baht(received)}</td>
+                  <td className="px-4 py-2 print:py-1 text-emerald-700">บวก รับเงินเพิ่ม ({ins.length} รายการ)</td>
+                  <td className="tabular px-4 py-2 print:py-1 text-right text-emerald-700">+{baht(received)}</td>
                 </tr>
               )}
               {unpaid > 0 && (
                 <tr className="border-b border-slate-200">
-                  <td className="px-4 py-2 print:py-1.5 text-rose-600">หัก ค่าซักผ้าที่ลูกค้ายังค้างชำระ</td>
-                  <td className="tabular px-4 py-2 print:py-1.5 text-right text-rose-600">-{baht(unpaid)}</td>
+                  <td className="px-4 py-2 print:py-1 text-rose-600">หัก ค่าซักผ้าที่ลูกค้ายังค้างชำระ</td>
+                  <td className="tabular px-4 py-2 print:py-1 text-right text-rose-600">-{baht(unpaid)}</td>
                 </tr>
               )}
               {spent > 0 && (
                 <tr className="border-b border-slate-200">
-                  <td className="px-4 py-2 print:py-1.5 text-rose-600">หัก เบิกเงินไปใช้ ({outs.length} รายการ)</td>
-                  <td className="tabular px-4 py-2 print:py-1.5 text-right text-rose-600">-{baht(spent)}</td>
+                  <td className="px-4 py-2 print:py-1 text-rose-600">หัก เบิกเงินไปใช้ ({outs.length} รายการ)</td>
+                  <td className="tabular px-4 py-2 print:py-1 text-right text-rose-600">-{baht(spent)}</td>
                 </tr>
               )}
               <tr className="bg-indigo-50">
@@ -491,7 +480,7 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
                   <p className="font-bold text-indigo-900">ยอดเงินที่นำส่ง</p>
                   <p className="text-xs text-indigo-700">({bahtText(handIn)})</p>
                 </td>
-                <td className="tabular px-4 py-3 text-right text-2xl font-bold text-indigo-900 print:py-2">{baht(handIn)}</td>
+                <td className="tabular px-4 py-3 text-right text-2xl font-bold text-indigo-900 print:py-1 print:text-xl">{baht(handIn)}</td>
               </tr>
             </tbody>
           </table>
@@ -515,40 +504,12 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
         </Section>
 
         {/* ช่องเซ็น */}
-        <section className="mt-10 break-inside-avoid print:mt-4">
-          {/* ข้อมูลเยอะจนช่องเซ็นไปอยู่หน้าสุดท้าย — สรุปยอดซ้ำไว้ตรงนี้ หัวหน้าไม่ต้องพลิกกลับไปหน้าแรก */}
-          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
-            <div className="flex flex-wrap gap-x-6 gap-y-1">
-              <span>
-                เช่ารถ {rents.length} รายการ <b className="tabular text-slate-800">{baht(rentTotal)}</b>
-              </span>
-              <span>
-                ซักผ้า {washes.length} รายการ <b className="tabular text-slate-800">{baht(washTotal)}</b>
-              </span>
-              {unpaid > 0 && (
-                <span className="text-rose-600">
-                  ค้างชำระ <b className="tabular">-{baht(unpaid)}</b>
-                </span>
-              )}
-              {received > 0 && (
-                <span className="text-emerald-700">
-                  รับเงิน <b className="tabular">+{baht(received)}</b>
-                </span>
-              )}
-              {spent > 0 && (
-                <span className="text-rose-600">
-                  เบิกใช้ <b className="tabular">-{baht(spent)}</b>
-                </span>
-              )}
-              <span className="ml-auto font-semibold text-indigo-900">
-                ยอดเงินที่นำส่ง <span className="tabular text-sm">{baht(handIn)}</span>
-              </span>
-            </div>
-            <p className="mt-1.5 border-t border-slate-200 pt-1.5">
-              ข้าพเจ้าขอรับรองว่ารายการข้างต้นถูกต้อง และได้นำส่งเงินจำนวน{" "}
-              <b className="tabular text-slate-800">{baht(handIn)}</b> ({bahtText(handIn)}) ครบถ้วนแล้ว
-            </p>
-          </div>
+        <section className="mt-10 break-inside-avoid print:mt-3">
+          {/* ระบุยอดนำส่งซ้ำตรงช่องเซ็น — ข้อมูลเยอะจนช่องเซ็นไปอยู่หน้าหลัง หัวหน้าไม่ต้องพลิกกลับไปหน้าแรก */}
+          <p className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 text-xs text-slate-700 print:mb-2 print:py-1.5">
+            ข้าพเจ้าขอรับรองว่ารายการข้างต้นถูกต้อง และได้นำส่งเงินจำนวน{" "}
+            <b className="tabular text-sm text-indigo-900">{baht(handIn)}</b> ({bahtText(handIn)}) ครบถ้วนแล้ว
+          </p>
           <div className="grid gap-4 sm:grid-cols-2 print:grid-cols-2">
             <SignBox title="ผู้ส่งเงิน / ผู้จัดทำรายงาน" />
             <SignBox title="ผู้รับเงิน (หัวหน้า)" amountLine />

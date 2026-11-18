@@ -190,4 +190,17 @@ dialog::backdrop {
   .report tr {
     break-inside: avoid;
   }
+  /* ตารางยืด/หดตามหน้ากระดาษเสมอ (พิมพ์จากมือถือ ตารางที่ตั้งความกว้างขั้นต่ำไว้จะล้นขอบกระดาษ) */
+  .report table {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  .report .overflow-x-auto {
+    overflow: visible !important;
+  }
+  .report,
+  .report * {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
 }
