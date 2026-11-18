@@ -1,5 +1,5 @@
 // สถานะการเช่า: กำหนดคืน / เลยกำหนด — ใช้ได้ทั้งฝั่ง server และ client
-import { addDays, diffDays, thShort } from "./dates";
+import { addDays, diffDays, isISODate, thShort } from "./dates";
 import { rentalTotal, type Rental } from "./schema";
 
 /** วันที่คืนจริง (ข้อมูลเก่าที่ไม่มีวันที่คืน ถือว่าคืนวันเดียวกับวันที่ยืม) */
@@ -7,13 +7,46 @@ export function returnDateOf(r: Pick<Rental, "date" | "returnDate" | "returnTime
   return r.returnTime ? r.returnDate || r.date : "";
 }
 
-/** เงินค่าเช่าที่ได้รับในช่วง from–to: ตอนปล่อยรถนับวันที่เช่า, ส่วนที่เก็บเพิ่ม/คืนให้ตอนคืนรถนับวันที่คืน */
+// ---------------------------------------------------------------- เงินที่รับหลังวันเช่า (ต่อเวลา / คืนรถ)
+
+export type LaterPayment = { date: string; amount: number };
+
+export function laterPayments(r: Pick<Rental, "later">): LaterPayment[] {
+  return String(r.later ?? "")
+    .split(",")
+    .map((s) => s.split(":"))
+    .map(([date, amount]) => ({ date: date?.trim() ?? "", amount: Number(amount) }))
+    .filter((p) => isISODate(p.date) && Number.isFinite(p.amount) && p.amount !== 0);
+}
+
+/** ค่าเช่าที่จ่ายตอนปล่อยรถ = ยอดรวม − เงินที่รับ/คืนภายหลัง */
+export function paidAtRent(r: Pick<Rental, "total" | "later">) {
+  return r.total - laterPayments(r).reduce((s, p) => s + p.amount, 0);
+}
+
+/** เงินค่าเช่าที่ได้รับในช่วง from–to: ตอนปล่อยรถนับวันที่เช่า, ที่รับเพิ่ม/คืนภายหลังนับวันที่รับ */
 export function rentCashIn(r: Rental, from: string, to = from) {
-  let sum = 0;
-  if (r.date >= from && r.date <= to) sum += r.total - r.returnExtra;
-  const back = returnDateOf(r);
-  if (back && back >= from && back <= to) sum += r.returnExtra;
+  let sum = r.date >= from && r.date <= to ? paidAtRent(r) : 0;
+  for (const p of laterPayments(r)) if (p.date >= from && p.date <= to) sum += p.amount;
   return sum;
+}
+
+/**
+ * ยอดรวมเปลี่ยนไป delta บาทในวัน when (ต่อเวลา / คืนรถ / แก้ไขภายหลัง) → จดเป็นเงินรับ/คืนของวันนั้น
+ * ถ้า when เป็นวันที่เช่าเอง ถือเป็นค่าเช่าตอนปล่อยรถ ไม่ต้องจด
+ */
+export function withLaterChange<T extends Pick<Rental, "date" | "later">>(r: T, delta: number, when: string): T {
+  if (!delta || !isISODate(when) || when === r.date) return r;
+  const list = laterPayments(r);
+  const p = list.find((x) => x.date === when);
+  if (p) p.amount += delta;
+  else list.push({ date: when, amount: delta });
+  const later = list
+    .filter((x) => Math.abs(x.amount) > 1e-9)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((x) => `${x.date}:${Math.round(x.amount * 100) / 100}`)
+    .join(", ");
+  return { ...r, later };
 }
 
 /** "29 ต.ค. 69 12:12" — ใส่วันที่เสมอ ไม่งั้นคืนข้ามวันจะดูไม่ออก */

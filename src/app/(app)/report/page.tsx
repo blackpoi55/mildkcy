@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui";
 import { getBikes, getExpenses, getLaundry, getRentals } from "@/lib/data";
 import { TH_DAYS, dayOfWeek, isISODate, nowTime, thLong, thShort, todayISO } from "@/lib/dates";
 import { baht, bahtText, number } from "@/lib/format";
-import { rentCashIn, returnDateOf } from "@/lib/rental-status";
+import { laterPayments, paidAtRent, rentCashIn, returnDateOf } from "@/lib/rental-status";
 import { isCashIn, type Expense, type Laundry, type Rental } from "@/lib/schema";
 import { ExpensePanel } from "./expenses";
 import { PrintButton } from "./print-button";
@@ -71,10 +71,9 @@ function Empty({ cols, text }: { cols: number; text: string }) {
   );
 }
 
-/** ค่าเช่าที่นับเป็นรายรับของวันที่เช่า — ส่วนที่เก็บเพิ่ม/คืนตอนคืนรถวันอื่นไปนับในวันที่คืน */
-function paidOnRentDay(r: Rental) {
-  return returnDateOf(r) === r.date ? r.total : r.total - r.returnExtra;
-}
+/** ค่าเช่าที่นับเป็นรายรับของวันที่เช่า — เงินที่รับเพิ่ม/คืนภายหลัง (ต่อเวลา / คืนรถ) ไปนับในวันนั้น ๆ */
+const paidOnRentDay = (r: Rental) => rentCashIn(r, r.date);
+const signed = (n: number) => `${n < 0 ? "-" : "+"}${baht(Math.abs(n))}`;
 
 function RentTable({ rows, model }: { rows: Rental[]; model: (id: string) => string }) {
   const sum = (k: "days" | "discount" | "fine") => rows.reduce((s, r) => s + r[k], 0);
@@ -128,12 +127,11 @@ function RentTable({ rows, model }: { rows: Rental[]; model: (id: string) => str
             <td className={`${td} ${num}`}>{dash(r.fine)}</td>
             <td className={`${td} ${num} font-semibold`}>
               {baht(paidOnRentDay(r))}
-              {paidOnRentDay(r) !== r.total && (
-                <p className="text-[10px] font-normal text-slate-500">
-                  {r.returnExtra > 0 ? "+" : "-"}
-                  {baht(Math.abs(r.returnExtra))} ตอนคืน {dm(returnDateOf(r))}
+              {laterPayments(r).map((p) => (
+                <p key={p.date} className="text-[10px] font-normal text-slate-500">
+                  {signed(p.amount)} รับ {dm(p.date)}
                 </p>
-              )}
+              ))}
             </td>
           </tr>
         ))}
@@ -156,20 +154,21 @@ function RentTable({ rows, model }: { rows: Rental[]; model: (id: string) => str
   );
 }
 
-/** เงินที่เก็บเพิ่ม (ค่าปรับ / วันที่เกิน) หรือคืนลูกค้า ตอนคืนรถวันนี้ ของการเช่าที่เริ่มวันอื่น */
-function ReturnExtraTable({ rows, model }: { rows: Rental[]; model: (id: string) => string }) {
-  const total = rows.reduce((s, r) => s + r.returnExtra, 0);
+/** เงินที่รับเพิ่ม (ต่อเวลา / ค่าปรับ / วันที่เกิน) หรือคืนลูกค้าในวันนี้ ของการเช่าที่เริ่มวันอื่น */
+function LaterTable({ rows, date, model }: { rows: Rental[]; date: string; model: (id: string) => string }) {
+  const today = (r: Rental) => rentCashIn(r, date);
+  const total = rows.reduce((s, r) => s + today(r), 0);
   return (
     <>
-      <p className="mt-4 mb-1.5 text-xs font-semibold text-slate-700">เก็บเพิ่ม / คืนเงิน ตอนคืนรถวันนี้ (เช่าวันอื่น)</p>
+      <p className="mt-4 mb-1.5 text-xs font-semibold text-slate-700">รับเงินเพิ่ม / คืนเงิน วันนี้ ของการเช่าวันอื่น (ต่อเวลา / คืนรถ)</p>
       <table className="w-full min-w-[640px] border-collapse text-xs">
         <thead>
           <tr className="bg-slate-100">
             <th className={`${th} w-8 text-center`}>#</th>
-            <th className={th}>เวลาคืน</th>
             <th className={th}>รถ</th>
             <th className={th}>ลูกค้า</th>
             <th className={th}>เช่าเมื่อ</th>
+            <th className={th}>เรื่อง</th>
             <th className={th}>ยอดการเช่า</th>
             <th className={`${th} text-right`}>รับวันนี้</th>
           </tr>
@@ -178,7 +177,6 @@ function ReturnExtraTable({ rows, model }: { rows: Rental[]; model: (id: string)
           {rows.map((r, i) => (
             <tr key={r.id} className="break-inside-avoid border-b border-slate-200">
               <td className={`${td} text-center text-slate-400`}>{i + 1}</td>
-              <td className={`${td} tabular whitespace-nowrap`}>{r.returnTime}</td>
               <td className={td}>
                 <p className="font-semibold whitespace-nowrap">{r.plate}</p>
                 <p className="text-[10px] whitespace-nowrap text-slate-500">{model(r.bikeId)}</p>
@@ -188,17 +186,27 @@ function ReturnExtraTable({ rows, model }: { rows: Rental[]; model: (id: string)
                 {r.note && <p className="text-[10px] text-slate-500">หมายเหตุ: {r.note}</p>}
               </td>
               <td className={`${td} whitespace-nowrap`}>{dm(r.date)}</td>
+              <td className={`${td} whitespace-nowrap`}>
+                {returnDateOf(r) === date ? (
+                  <span className="text-emerald-700">คืนรถ {r.returnTime}</span>
+                ) : r.returnTime ? (
+                  <span className="text-slate-600">แก้ไขยอด (คืน {dm(returnDateOf(r))})</span>
+                ) : (
+                  <span className="text-indigo-700">
+                    ต่อเวลา ถึง {dm(r.dueDate)} {r.dueTime}
+                  </span>
+                )}
+              </td>
               <td className={`${td} text-slate-600`}>
                 {number(r.days, 1)} วัน × {baht(r.price)}
                 {r.discount > 0 && ` · ส่วนลด ${baht(r.discount)}`}
                 {r.fine > 0 && ` · ค่าปรับ ${baht(r.fine)}`}
                 <p className="text-[10px]">
-                  รับตอนเช่า {baht(r.total - r.returnExtra)} → ยอดจริง {baht(r.total)}
+                  ยอดรวม {baht(r.total)} · รับตอนเช่า {baht(paidAtRent(r))}
                 </p>
               </td>
-              <td className={`${td} ${num} font-semibold ${r.returnExtra > 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                {r.returnExtra > 0 ? "+" : "-"}
-                {baht(Math.abs(r.returnExtra))}
+              <td className={`${td} ${num} font-semibold ${today(r) > 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                {signed(today(r))}
               </td>
             </tr>
           ))}
@@ -206,12 +214,9 @@ function ReturnExtraTable({ rows, model }: { rows: Rental[]; model: (id: string)
         <tfoot>
           <tr className="bg-sky-50 font-semibold">
             <td colSpan={6} className={`${td} text-right`}>
-              รวมเก็บตอนคืนรถ {rows.length} รายการ
+              รวมรับเพิ่ม {rows.length} รายการ
             </td>
-            <td className={`${td} ${num} text-sky-800`}>
-              {total < 0 ? "-" : "+"}
-              {baht(Math.abs(total))}
-            </td>
+            <td className={`${td} ${num} text-sky-800`}>{signed(total)}</td>
           </tr>
         </tfoot>
       </table>
@@ -377,10 +382,10 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
   // รายได้เช่ารถนับที่วันเริ่มเช่า (เหมือนแดชบอร์ด)
   const rents = rentals.filter((r) => r.date === date).sort((a, b) => byTime(a, b) || a.plate.localeCompare(b.plate));
   const washes = laundry.filter((l) => l.date === date).sort(byTime);
-  // ค่าปรับ / วันที่เกิน ที่เก็บตอนคืนรถวันนี้ ของการเช่าที่เริ่มวันอื่น
+  // เงินที่รับเพิ่ม/คืนวันนี้ (ต่อเวลา / ค่าปรับ / วันที่เกิน) ของการเช่าที่เริ่มวันอื่น
   const backs = rentals
-    .filter((r) => r.returnExtra && r.date !== date && returnDateOf(r) === date)
-    .sort((a, b) => a.returnTime.localeCompare(b.returnTime));
+    .filter((r) => r.date !== date && laterPayments(r).some((p) => p.date === date))
+    .sort((a, b) => a.plate.localeCompare(b.plate));
   const rentTotal = rentals.reduce((s, r) => s + rentCashIn(r, date), 0);
   const rentDays = rents.reduce((s, r) => s + r.days, 0);
   const washTotal = washes.reduce((s, l) => s + l.price, 0);
@@ -442,7 +447,7 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
             tone="rent"
             label="รายได้เช่ารถ"
             value={baht(rentTotal)}
-            sub={`${rents.length} รายการ · ${number(rentDays, 1)} วันเช่า${backs.length ? ` · เก็บตอนคืน ${backs.length}` : ""}`}
+            sub={`${rents.length} รายการ · ${number(rentDays, 1)} วันเช่า${backs.length ? ` · รับเพิ่ม ${backs.length}` : ""}`}
           />
           <Stat
             tone="laundry"
@@ -492,9 +497,9 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
           </table>
         </div>
 
-        <Section no={1} title="รายละเอียดการเช่ารถ" note="ค่าเช่านับวันที่ปล่อยรถ · ส่วนที่เก็บเพิ่มตอนคืนนับวันที่คืน">
+        <Section no={1} title="รายละเอียดการเช่ารถ" note="ค่าเช่านับวันที่ปล่อยรถ · ต่อเวลา/เก็บเพิ่มตอนคืน นับวันที่รับเงิน">
           <RentTable rows={rents} model={model} />
-          {backs.length > 0 && <ReturnExtraTable rows={backs} model={model} />}
+          {backs.length > 0 && <LaterTable rows={backs} date={date} model={model} />}
         </Section>
 
         <Section no={2} title="รายละเอียดซักผ้า" note={unpaid ? `ค้างชำระ ${baht(unpaid)}` : "ชำระครบทุกรายการ"}>

@@ -8,8 +8,8 @@ import { redirect } from "next/navigation";
 import { AUTH_COOKIE, authToken, isValidToken } from "@/lib/auth";
 import { getSettings } from "@/lib/data";
 import type { LaundryPrice } from "@/lib/laundry";
-import { addDays, diffDays, isISODate, nowTime, todayISO } from "@/lib/dates";
-import { lastDayOut, planDay, resized } from "@/lib/rental-status";
+import { addDays, diffDays, isISODate, nowTime, thShort, todayISO } from "@/lib/dates";
+import { billingEnd, lastDayOut, planDay, resized, withLaterChange } from "@/lib/rental-status";
 import { bookingOf, rentalTotal, type Bike, type Expense, type Laundry, type Rental } from "@/lib/schema";
 import { getStore, newId } from "@/lib/store";
 
@@ -126,7 +126,7 @@ function newRental(bike: Bike, fields: Partial<Rental> & { date: string }): Rent
     discount: 0,
     fine: 0,
     total: 0,
-    returnExtra: 0,
+    later: "",
     customer: str(fields.customer),
     note: str(fields.note),
     createdAt: now(),
@@ -166,7 +166,9 @@ export async function setRentalDay(input: { bikeId: string; date: string; rented
         return { ...none, created: [r] };
       }
       default: {
-        const { id, ...patch } = resized(plan.target, plan.kind);
+        // ต่อ/ลดวันของการเช่าที่ยังไม่คืน → ส่วนต่างนับเป็นเงินรับ/คืนของวันนี้
+        const next = resized(plan.target, plan.kind);
+        const { id, ...patch } = withLaterChange(next, next.total - plan.target.total, todayISO());
         await store.update("rentals", id, patch);
         return { ...none, before: plan.target };
       }
@@ -262,9 +264,8 @@ export async function setReturned(
     }
     if (days !== null || extras) rowPatch.total = rentalTotal({ ...row, ...rowPatch });
     // ยอดที่เปลี่ยนตอนคืนรถ (ค่าปรับ / วันที่เกิน / ส่วนลด) นับเป็นรายรับของวันที่คืน
-    // ยกเลิกการคืน → ไม่มีวันที่คืนให้นับ จึงรวมกลับไปที่วันที่เช่า
-    const paidAtRent = row.total - row.returnExtra;
-    rowPatch.returnExtra = t ? (rowPatch.total ?? row.total) - paidAtRent : 0;
+    const delta = (rowPatch.total ?? row.total) - row.total;
+    if (delta) rowPatch.later = withLaterChange(row, delta, d || row.returnDate || todayISO()).later;
     await store.updateMany(
       "rentals",
       booking
@@ -279,6 +280,35 @@ export async function setReturned(
 }
 
 /** เลิกทำการยกเลิกเช่า: ใส่รายการเดิมกลับ (ค่าเดิมทุกช่อง รวมเวลา ลูกค้า ส่วนลด) */
+/** ต่อเวลา / เลื่อนกำหนดคืนของการเช่าที่ยังไม่คืน — ส่วนต่างค่าเช่านับเป็นรายรับของวันนี้ */
+export async function extendRental(id: string, dueDate: string, dueTime: string) {
+  return guard(async (): Promise<{ before: Rental; after: Rental }> => {
+    if (!isISODate(dueDate)) throw new Error("กรุณาเลือกวันที่คืนใหม่");
+    if (dueTime && !TIME_RE.test(dueTime)) throw new Error("เวลาไม่ถูกต้อง");
+    const store = getStore();
+    const all = await store.all("rentals");
+    const row = all.find((r) => r.id === id);
+    if (!row) throw new Error("ไม่พบรายการเช่านี้ (อาจถูกลบไปแล้ว)");
+    if (row.returnTime) throw new Error("รถคันนี้คืนแล้ว — แก้ไขในหน้าต่างแก้ไขแทน");
+    if (dueDate <= row.date) throw new Error("วันที่คืนต้องหลังวันที่เช่า");
+    // นับวันแบบเดียวกับตอนสร้างการเช่า
+    const days = Math.max(1, diffDays(row.date, dueDate));
+    const next: Rental = { ...row, dueDate, dueTime: str(dueTime) || row.dueTime, days };
+    next.total = rentalTotal(next);
+    // ห้ามทับการเช่าอื่นของรถคันเดียวกันในช่วงที่ต่อเพิ่ม
+    const from = addDays(billingEnd(row), 1);
+    const to = billingEnd(next);
+    const today = todayISO();
+    const clash = all.find(
+      (r) => r.bikeId === row.bikeId && r.id !== row.id && r.days > 0 && r.date <= to && lastDayOut(r, today) >= from,
+    );
+    if (to >= from && clash) throw new Error(`${row.plate} มีการเช่าวันที่ ${thShort(clash.date)} อยู่แล้ว ต่อเวลาทับไม่ได้`);
+    const after = withLaterChange(next, next.total - row.total, today);
+    await store.update("rentals", id, after);
+    return { before: row, after };
+  });
+}
+
 export async function restoreRentals(rows: Rental[]) {
   return guard(async () => {
     const store = getStore();
@@ -317,15 +347,22 @@ export async function saveRental(input: Partial<Rental>) {
       discount: num(input.discount),
       fine: num(input.fine),
       total: 0,
-      returnExtra: 0,
+      later: str(input.later),
       customer: str(input.customer),
       note: str(input.note),
       createdAt: input.createdAt || now(),
     };
     r.total = rentalTotal(r);
-    // แก้รายการที่คืนแล้ว: ยอดที่เปลี่ยนถือเป็นเงินที่เก็บเพิ่ม/คืนตอนคืนรถ (ใบสรุปของวันที่เช่าที่ส่งไปแล้วไม่เปลี่ยน)
-    if (prev?.returnTime && r.returnTime) r.returnExtra = prev.returnExtra + r.total - prev.total;
-    if (input.id) await store.update("rentals", input.id, r);
+    // แก้ยอดภายหลัง → ส่วนต่างนับเป็นเงินรับ/คืนของวันที่คืน (ถ้าคืนแล้ว) หรือวันนี้ — ใบสรุปของวันที่เช่าที่ส่งไปแล้วไม่เปลี่ยน
+    // ใช้ประวัติจากข้อมูลจริงเสมอ (เลิกทำจะได้หักล้างกันพอดี)
+    const saved = prev
+      ? withLaterChange(
+          { ...r, later: prev.later },
+          r.total - prev.total,
+          r.returnTime ? r.returnDate : prev.returnTime ? prev.returnDate : todayISO(),
+        )
+      : r;
+    if (input.id) await store.update("rentals", input.id, saved);
     else await store.insert("rentals", [r]);
   });
 }
@@ -504,7 +541,7 @@ export async function importSeed() {
         returnTime: "",
         bookingId: "",
         total: 0,
-        returnExtra: 0,
+        later: "",
         createdAt: now(),
       };
       row.total = rentalTotal(row);

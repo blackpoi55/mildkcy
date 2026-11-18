@@ -1,9 +1,9 @@
 "use client";
 
-import { AlarmClock, CalendarClock, Check, CheckCheck, Clock, KeyRound, ListChecks, Pencil, Plus, Receipt, Rows3, Search, Table2, Trash2, Undo2, User, X } from "lucide-react";
+import { AlarmClock, CalendarClock, CalendarPlus, Check, CheckCheck, Clock, KeyRound, ListChecks, Pencil, Plus, Receipt, Rows3, Search, Table2, Trash2, Undo2, User, X } from "lucide-react";
 import { useMemo, useOptimistic, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { createBooking, deleteRental, deleteRentals, restoreRentals, saveRental, setRentalDay, setReturned } from "@/app/actions";
+import { createBooking, deleteRental, deleteRentals, extendRental, restoreRentals, saveRental, setRentalDay, setReturned } from "@/app/actions";
 import { DateNav, useSetParam } from "@/components/date-nav";
 import { Badge, Button, Card, Empty, Field, Input, Modal, Segmented, Select, Textarea, cn } from "@/components/ui";
 import { confirmDialog } from "@/lib/confirm";
@@ -98,6 +98,7 @@ export function RentalsClient({
   const [editing, setEditing] = useState<Partial<Rental> | null>(null);
   const [renting, setRenting] = useState<Bike | null>(null);
   const [returning, setReturning] = useState<Rental | null>(null);
+  const [extending, setExtending] = useState<Rental | null>(null);
   const [q, setQ] = useState("");
   /** ซ่อนรายการที่เพิ่งกดคืน ระหว่างรอข้อมูลใหม่จากชีต */
   const [gone, setGone] = useState<Set<string>>(new Set());
@@ -144,7 +145,7 @@ export function RentalsClient({
             discount: 0,
             fine: 0,
             total: bike.dailyRate,
-            returnExtra: 0,
+            later: "",
             customer: "",
             note: "",
             createdAt: "",
@@ -253,6 +254,36 @@ export function RentalsClient({
         },
       });
     });
+
+  /** ต่อเวลา: เลื่อนกำหนดคืน ส่วนต่างค่าเช่านับเป็นรายรับวันนี้ — มีปุ่มเลิกทำ */
+  const confirmExtend = (r: Rental, dueDate: string, dueTime: string) =>
+    new Promise<boolean>((resolve) =>
+      start(async () => {
+        const res = await extendRental(r.id, dueDate, dueTime);
+        if (!res.ok || !res.data) {
+          toast.error(res.ok ? "เกิดข้อผิดพลาด" : res.error);
+          return resolve(false);
+        }
+        resolve(true);
+        const { before, after } = res.data;
+        const extra = after.total - before.total;
+        toast.success(
+          `ต่อเวลา ${r.plate} ถึง ${thShort(dueDate)} ${dueTime} น.${extra ? ` · ${extra > 0 ? "เก็บเพิ่ม" : "คืนเงิน"} ${baht(Math.abs(extra))}` : ""}`,
+          {
+            duration: 10_000,
+            action: {
+              label: "เลิกทำ",
+              onClick: () =>
+                start(async () => {
+                  const u = await saveRental(before);
+                  if (u.ok) toast.success("เลิกทำแล้ว");
+                  else toast.error(u.error);
+                }),
+            },
+          },
+        );
+      }),
+    );
 
   /** กดคืนรถ = เปิดหน้าต่างคืนรถ (แก้เวลา ส่วนลด ค่าปรับ หมายเหตุได้) / ยกเลิกการคืน = ทำทันที */
   const markReturned = (r: Rental, returned: boolean) => (returned ? setReturning(r) : unReturn(r));
@@ -430,6 +461,7 @@ export function RentalsClient({
             now={nowHM}
             searching={!!needle}
             onReturn={(r) => setReturning(r)}
+            onExtend={setExtending}
             onUnreturn={unReturn}
             onEdit={setEditing}
             onGoRent={() => setParam("mode", "rent")}
@@ -526,6 +558,7 @@ export function RentalsClient({
         onClose={() => setReturning(null)}
         onSubmit={confirmReturn}
       />
+      <ExtendDialog rental={extending} today={today} onClose={() => setExtending(null)} onSubmit={confirmExtend} />
     </>
   );
 }
@@ -1463,19 +1496,102 @@ function ReturnDialog({
           </span>
           <span className="tabular text-xl font-bold">{baht(totalFor(days))}</span>
         </div>
-        <AtReturn amount={totalFor(days) - (rental.total - rental.returnExtra)} />
+        <AtCounter amount={totalFor(days) - rental.total} when="คืนรถ" />
       </div>
     </Modal>
   );
 }
 
-/** เงินที่ต้องเก็บเพิ่ม/คืนลูกค้าตอนคืนรถ — นับเป็นรายรับของวันที่คืน (ใบสรุปของวันที่เช่าไม่เปลี่ยน) */
-function AtReturn({ amount }: { amount: number }) {
+/** หน้าต่างต่อเวลา: เลือกวันที่/เวลาคืนใหม่ แล้วบอกเงินที่ต้องเก็บเพิ่ม */
+function ExtendDialog({
+  rental,
+  today,
+  onClose,
+  onSubmit,
+}: {
+  rental: Rental | null;
+  today: string;
+  onClose: () => void;
+  onSubmit: (r: Rental, dueDate: string, dueTime: string) => Promise<boolean>;
+}) {
+  const [form, setForm] = useState({ dueDate: "", dueTime: "" });
+  const [busy, setBusy] = useState(false);
+  const [last, setLast] = useState<Rental | null>(null);
+  // เปิดหน้าต่างใหม่ → ตั้งค่าเริ่มต้นเป็นกำหนดคืนเดิม + 1 วัน
+  if (rental !== last) {
+    setLast(rental);
+    if (rental) {
+      const base = rental.dueDate && rental.dueDate >= today ? rental.dueDate : today;
+      setForm({ dueDate: addDays(base, 1), dueTime: rental.dueTime || rental.time || "10:00" });
+    }
+  }
+  if (!rental) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
+  const days = form.dueDate > rental.date ? Math.max(1, diffDays(rental.date, form.dueDate)) : rental.days;
+  const extra = rentalTotal({ ...rental, days }) - rental.total;
+  const valid = form.dueDate > rental.date;
+  const submit = async () => {
+    setBusy(true);
+    const ok = await onSubmit(rental, form.dueDate, form.dueTime);
+    setBusy(false);
+    if (ok) onClose();
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`ต่อเวลา ${rental.plate}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            ยกเลิก
+          </Button>
+          <Button disabled={busy || !valid} onClick={submit}>
+            <CalendarPlus className="size-4" /> บันทึกต่อเวลา
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-muted">
+          ยืม {thShort(rental.date)} {rental.time} · กำหนดคืนเดิม{" "}
+          <b className="text-ink">{rental.dueDate ? dueText(rental.dueDate, rental.dueTime, today) : "ไม่ได้กำหนด"}</b>
+          {rental.customer && ` · ${rental.customer}`}
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="คืนรถวันที่ (ใหม่)">
+            <Input
+              type="date"
+              min={addDays(rental.date, 1)}
+              value={form.dueDate}
+              onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))}
+            />
+          </Field>
+          <Field label="เวลา">
+            <Input type="time" value={form.dueTime} onChange={(e) => setForm((f) => ({ ...f, dueTime: e.target.value }))} />
+          </Field>
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-surface-2 px-4 py-3">
+          <span className="text-sm">
+            จำนวนวันเช่า
+            <span className="block text-xs text-muted">
+              เดิม {rental.days} วัน → {days} วัน × {baht(rental.price)}
+            </span>
+          </span>
+          <span className="tabular text-lg font-bold">{baht(rentalTotal({ ...rental, days }))}</span>
+        </div>
+        <AtCounter amount={extra} when="ต่อเวลา" />
+      </div>
+    </Modal>
+  );
+}
+
+/** เงินที่ต้องเก็บเพิ่ม/คืนลูกค้าตอนต่อเวลาหรือคืนรถ — นับเป็นรายรับของวันนั้น (ใบสรุปของวันที่เช่าไม่เปลี่ยน) */
+function AtCounter({ amount, when }: { amount: number; when: "คืนรถ" | "ต่อเวลา" }) {
   if (!amount) return null;
   return (
     <p className={cn("rounded-xl px-4 py-2.5 text-sm", amount > 0 ? "bg-warn-soft text-warn" : "bg-bad-soft text-bad")}>
       {amount > 0 ? "เก็บเงินเพิ่มจากลูกค้า" : "คืนเงินให้ลูกค้า"} <b className="tabular">{baht(Math.abs(amount))}</b>
-      <span className="block text-xs opacity-80">นับเป็นรายรับของวันที่คืนรถ</span>
+      <span className="block text-xs opacity-80">นับเป็นรายรับของวันที่{when === "คืนรถ" ? "คืนรถ" : "ต่อเวลา (วันนี้)"}</span>
     </p>
   );
 }
@@ -1495,6 +1611,7 @@ function ReturnTab({
   now,
   searching,
   onReturn,
+  onExtend,
   onUnreturn,
   onEdit,
   onGoRent,
@@ -1506,6 +1623,7 @@ function ReturnTab({
   now: string;
   searching: boolean;
   onReturn: (r: Rental) => void;
+  onExtend: (r: Rental) => void;
   onUnreturn: (r: Rental) => void;
   onEdit: (r: Rental) => void;
   onGoRent: () => void;
@@ -1597,9 +1715,14 @@ function ReturnTab({
                       {left < 0 ? `เลยกำหนดมา ${durationText(-left)}` : `อีก ${durationText(left)} ถึงเวลาคืน`}
                     </p>
                   )}
-                  <Button size="lg" className="w-full" onClick={() => onReturn(r)}>
-                    <KeyRound className="size-5" /> รับรถคืน
-                  </Button>
+                  <div className="grid grid-cols-[auto_1fr] gap-2">
+                    <Button size="lg" variant="secondary" onClick={() => onExtend(r)}>
+                      <CalendarPlus className="size-5" /> ต่อเวลา
+                    </Button>
+                    <Button size="lg" onClick={() => onReturn(r)}>
+                      <KeyRound className="size-5" /> รับรถคืน
+                    </Button>
+                  </div>
                 </div>
               );
             })}

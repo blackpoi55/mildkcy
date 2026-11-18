@@ -41,7 +41,7 @@ export const TABLES = {
       { key: "discount", label: "ส่วนลด", type: "number" },
       { key: "fine", label: "ค่าปรับ", type: "number" },
       { key: "total", label: "ยอดรวม", type: "number" },
-      { key: "returnExtra", label: "เก็บเพิ่มตอนคืน", type: "number" },
+      { key: "later", label: "รับเงินภายหลัง" },
       { key: "customer", label: "ลูกค้า" },
       { key: "note", label: "หมายเหตุ" },
       { key: "createdAt", label: "สร้างเมื่อ" },
@@ -129,10 +129,10 @@ export type Rental = {
   fine: number;
   total: number;
   /**
-   * ส่วนของยอดรวมที่เก็บ (+) หรือคืนลูกค้า (−) ตอนคืนรถ เช่น ค่าปรับ / วันที่เกิน — นับเป็นรายรับของวันที่คืน
-   * ที่เหลือ (total − returnExtra) นับเป็นรายรับของวันที่เช่า; ข้อมูลเก่า = 0 (จ่ายครบตอนเช่า)
+   * เงินที่รับเพิ่ม (+) หรือคืนลูกค้า (−) หลังวันเช่า เช่น ต่อเวลา / ค่าปรับตอนคืน — "2026-11-18:500, 2026-11-21:100"
+   * นับเป็นรายรับของวันนั้น ๆ ส่วนที่เหลือของยอดรวมนับเป็นรายรับของวันที่เช่า; ว่าง = จ่ายครบตอนเช่า
    */
-  returnExtra: number;
+  later: string;
   customer: string;
   note: string;
   createdAt: string;
