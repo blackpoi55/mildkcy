@@ -8,7 +8,7 @@ import { getBikes, getExpenses, getLaundry, getRentals } from "@/lib/data";
 import { TH_DAYS, dayOfWeek, isISODate, nowTime, thLong, thShort, todayISO } from "@/lib/dates";
 import { baht, bahtText, number } from "@/lib/format";
 import { returnDateOf } from "@/lib/rental-status";
-import type { Expense, Laundry, Rental } from "@/lib/schema";
+import { isCashIn, type Expense, type Laundry, type Rental } from "@/lib/schema";
 import { ExpensePanel } from "./expenses";
 import { PrintButton } from "./print-button";
 
@@ -189,41 +189,63 @@ function WashTable({ rows }: { rows: Laundry[] }) {
   );
 }
 
-function ExpenseTable({ rows }: { rows: Expense[] }) {
-  const total = rows.reduce((s, e) => s + e.amount, 0);
+function CashTable({ rows }: { rows: Expense[] }) {
+  const ins = rows.filter(isCashIn);
+  const outs = rows.filter((e) => !isCashIn(e));
+  const sum = (list: Expense[]) => list.reduce((s, e) => s + e.amount, 0);
   return (
-    <table className="w-full min-w-[520px] border-collapse text-xs">
+    <table className="w-full min-w-[560px] border-collapse text-xs">
       <thead>
         <tr className="bg-slate-100">
           <th className={`${th} w-8 text-center`}>#</th>
           <th className={th}>เวลา</th>
+          <th className={th}>ประเภท</th>
           <th className={th}>รายการ</th>
-          <th className={th}>ผู้เบิก</th>
+          <th className={th}>ผู้รับ / ผู้เบิก</th>
           <th className={th}>หมายเหตุ</th>
           <th className={`${th} text-right`}>จำนวนเงิน</th>
         </tr>
       </thead>
       <tbody>
-        {rows.length === 0 && <Empty cols={6} text="ไม่มีการเบิกเงินในวันนี้" />}
-        {rows.map((e, i) => (
-          <tr key={e.id} className="break-inside-avoid border-b border-slate-200">
-            <td className={`${td} text-center text-slate-400`}>{i + 1}</td>
-            <td className={`${td} tabular whitespace-nowrap`}>{e.time || "-"}</td>
-            <td className={`${td} font-semibold`}>{e.item}</td>
-            <td className={td}>{e.by || "-"}</td>
-            <td className={`${td} text-slate-600`}>{e.note || "-"}</td>
-            <td className={`${td} ${num} font-semibold text-rose-600`}>-{baht(e.amount)}</td>
-          </tr>
-        ))}
+        {rows.length === 0 && <Empty cols={7} text="ไม่มีการรับหรือเบิกเงินในวันนี้" />}
+        {rows.map((e, i) => {
+          const cashIn = isCashIn(e);
+          return (
+            <tr key={e.id} className="break-inside-avoid border-b border-slate-200">
+              <td className={`${td} text-center text-slate-400`}>{i + 1}</td>
+              <td className={`${td} tabular whitespace-nowrap`}>{e.time || "-"}</td>
+              <td className={`${td} whitespace-nowrap font-semibold ${cashIn ? "text-emerald-700" : "text-rose-600"}`}>
+                {cashIn ? "รับเงิน" : "เบิกเงิน"}
+              </td>
+              <td className={`${td} font-semibold`}>{e.item}</td>
+              <td className={td}>{e.by || "-"}</td>
+              <td className={`${td} text-slate-600`}>{e.note || "-"}</td>
+              <td className={`${td} ${num} font-semibold ${cashIn ? "text-emerald-700" : "text-rose-600"}`}>
+                {cashIn ? "+" : "-"}
+                {baht(e.amount)}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
       {rows.length > 0 && (
         <tfoot>
-          <tr className="bg-rose-50 font-semibold">
-            <td colSpan={5} className={`${td} text-right`}>
-              รวมเบิก {rows.length} รายการ
-            </td>
-            <td className={`${td} ${num} text-rose-700`}>-{baht(total)}</td>
-          </tr>
+          {ins.length > 0 && (
+            <tr className="bg-emerald-50 font-semibold">
+              <td colSpan={6} className={`${td} text-right`}>
+                รวมรับเงิน {ins.length} รายการ
+              </td>
+              <td className={`${td} ${num} text-emerald-700`}>+{baht(sum(ins))}</td>
+            </tr>
+          )}
+          {outs.length > 0 && (
+            <tr className="bg-rose-50 font-semibold">
+              <td colSpan={6} className={`${td} text-right`}>
+                รวมเบิกเงิน {outs.length} รายการ
+              </td>
+              <td className={`${td} ${num} text-rose-700`}>-{baht(sum(outs))}</td>
+            </tr>
+          )}
         </tfoot>
       )}
     </table>
@@ -286,10 +308,13 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
   const spends = expenses
     .filter((e) => e.date === date)
     .sort((a, b) => byTime(a, b) || a.createdAt.localeCompare(b.createdAt));
-  const spent = spends.reduce((s, e) => s + e.amount, 0);
+  const ins = spends.filter(isCashIn);
+  const outs = spends.filter((e) => !isCashIn(e));
+  const received = ins.reduce((s, e) => s + e.amount, 0);
+  const spent = outs.reduce((s, e) => s + e.amount, 0);
   const grand = rentTotal + washTotal;
-  // เงินที่ต้องมีอยู่ในมือ = รายรับ − ค่าซักผ้าที่ยังไม่ได้เงิน − เงินที่เบิกไปใช้
-  const handIn = grand - unpaid - spent;
+  // เงินที่ต้องมีอยู่ในมือ = รายรับ + เงินที่รับเข้ามา − ค่าซักผ้าที่ยังไม่ได้เงิน − เงินที่เบิกไปใช้
+  const handIn = grand + received - unpaid - spent;
   const dayLabel = `วัน${TH_DAYS[dayOfWeek(date)]}ที่ ${thLong(date)}`;
 
   return (
@@ -351,10 +376,16 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
           <table className="w-full text-sm">
             <tbody>
               {/* รายรับแยกประเภทอยู่ในกล่องด้านบนแล้ว — ตรงนี้แสดงแค่ รวมรายรับ − รายการหัก = ยอดนำส่ง */}
-              {(unpaid > 0 || spent > 0) && (
+              {(received > 0 || unpaid > 0 || spent > 0) && (
                 <tr className="border-b border-slate-200">
                   <td className="px-4 py-2 print:py-1.5 text-slate-600">รวมรายรับทั้งสิ้น</td>
                   <td className="tabular px-4 py-2 print:py-1.5 text-right">{baht(grand)}</td>
+                </tr>
+              )}
+              {received > 0 && (
+                <tr className="border-b border-slate-200">
+                  <td className="px-4 py-2 print:py-1.5 text-emerald-700">บวก รับเงินเพิ่ม ({ins.length} รายการ)</td>
+                  <td className="tabular px-4 py-2 print:py-1.5 text-right text-emerald-700">+{baht(received)}</td>
                 </tr>
               )}
               {unpaid > 0 && (
@@ -365,7 +396,7 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
               )}
               {spent > 0 && (
                 <tr className="border-b border-slate-200">
-                  <td className="px-4 py-2 print:py-1.5 text-rose-600">หัก เบิกเงินไปใช้ ({spends.length} รายการ)</td>
+                  <td className="px-4 py-2 print:py-1.5 text-rose-600">หัก เบิกเงินไปใช้ ({outs.length} รายการ)</td>
                   <td className="tabular px-4 py-2 print:py-1.5 text-right text-rose-600">-{baht(spent)}</td>
                 </tr>
               )}
@@ -388,8 +419,12 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
           <WashTable rows={washes} />
         </Section>
 
-        <Section no={3} title="รายการเบิกเงินไปใช้" note={spent ? `รวมเบิก ${baht(spent)}` : "ไม่มีการเบิก"}>
-          <ExpenseTable rows={spends} />
+        <Section
+          no={3}
+          title="รายการรับเงิน / เบิกเงิน"
+          note={spends.length ? `รับ +${baht(received)} · เบิก -${baht(spent)}` : "ไม่มีรายการ"}
+        >
+          <CashTable rows={spends} />
         </Section>
 
         {/* ช่องเซ็น */}
@@ -406,6 +441,11 @@ async function ReportData({ searchParams }: { searchParams: PageProps<"/report">
               {unpaid > 0 && (
                 <span className="text-rose-600">
                   ค้างชำระ <b className="tabular">-{baht(unpaid)}</b>
+                </span>
+              )}
+              {received > 0 && (
+                <span className="text-emerald-700">
+                  รับเงิน <b className="tabular">+{baht(received)}</b>
                 </span>
               )}
               {spent > 0 && (
@@ -437,7 +477,7 @@ export default function ReportPage({ searchParams }: PageProps<"/report">) {
   return (
     <>
       <div className="print:hidden">
-        <PageHeader title="สรุปรายรับรายวัน" subtitle="เลือกวันที่ จดเงินที่เบิกไปใช้ ตรวจยอด แล้วบันทึกเป็น PDF ส่งให้หัวหน้าเซ็นรับเงิน" />
+        <PageHeader title="สรุปรายรับรายวัน" subtitle="เลือกวันที่ จดรับ/เบิกเงิน ตรวจยอด แล้วบันทึกเป็น PDF ส่งให้หัวหน้าเซ็นรับเงิน" />
       </div>
       <Suspense
         fallback={

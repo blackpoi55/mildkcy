@@ -387,19 +387,21 @@ export async function setLaundryPaid(ids: string[], paid: boolean) {
   });
 }
 
-// ---------------------------------------------------------------- เบิกเงิน
+// ---------------------------------------------------------------- รับ / เบิกเงิน
 
 export async function saveExpense(input: Partial<Expense>) {
   return guard(async () => {
     if (!isISODate(input.date)) throw new Error("กรุณาเลือกวันที่");
+    const kind = input.kind === "รับ" ? "รับ" : "เบิก";
     const item = str(input.item);
-    if (!item) throw new Error("กรุณาระบุว่าเบิกไปทำอะไร");
+    if (!item) throw new Error(kind === "รับ" ? "กรุณาระบุว่ารับเงินอะไร" : "กรุณาระบุว่าเบิกไปทำอะไร");
     const amount = num(input.amount);
     if (amount <= 0) throw new Error("กรุณาระบุจำนวนเงิน");
     const row: Expense = {
       id: input.id || newId(),
       date: input.date,
       time: str(input.time) || nowTime(),
+      kind,
       item,
       amount,
       by: str(input.by),

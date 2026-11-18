@@ -60,13 +60,17 @@ export const TABLES = {
       { key: "createdAt", label: "สร้างเมื่อ" },
     ],
   },
-  /** เงินที่หยิบจากเงินสดไปใช้ (ซื้อของ/จ่ายค่าต่างๆ) — หักออกจากยอดที่นำส่งหัวหน้า */
+  /**
+   * เงินสดเข้า-ออกนอกเหนือจากค่าเช่า/ค่าซัก: "เบิก" = หยิบไปใช้ (หักจากยอดนำส่ง), "รับ" = รับเงินเข้ามา (บวกเข้ายอดนำส่ง)
+   * ชื่อแท็บยังเป็น "เบิกเงิน" เพราะมีข้อมูลเดิมอยู่แล้ว
+   */
   expenses: {
     sheet: "เบิกเงิน",
     columns: [
       { key: "id", label: "id" },
       { key: "date", label: "วันที่", type: "date" },
       { key: "time", label: "เวลา" },
+      { key: "kind", label: "ประเภท" },
       { key: "item", label: "รายการ" },
       { key: "amount", label: "จำนวนเงิน", type: "number" },
       { key: "by", label: "ผู้เบิก" },
@@ -140,10 +144,14 @@ export type Laundry = {
   createdAt: string;
 };
 
+export type CashKind = "รับ" | "เบิก";
+
 export type Expense = {
   id: string;
   date: string;
   time: string;
+  /** "รับ" / "เบิก" — แถวก่อนมีช่องนี้ว่าง ถือเป็นเบิก */
+  kind: string;
   item: string;
   amount: number;
   by: string;
@@ -166,6 +174,11 @@ export type RowOf<T extends TableName> = T extends "bikes"
 export const BIKE_STATUSES = ["เช่า", "Resort", "ซาเล้ง", "ซ่อม", "ซากรถ", "ขายแล้ว"] as const;
 /** สถานะที่นับว่าเป็นรถพร้อมให้เช่า (ใช้คำนวณอัตราการใช้รถ) */
 export const RENTABLE_STATUS = "เช่า";
+
+/** รายการนี้เป็นเงินรับเข้า (ไม่ใช่เบิกออก) */
+export function isCashIn(e: Pick<Expense, "kind">) {
+  return e.kind === "รับ";
+}
 
 /** การเช่าครั้งนี้ (แถวเก่าที่ไม่มี bookingId ถือว่าเป็นการเช่าเดี่ยว) */
 export function bookingOf(r: Pick<Rental, "id" | "bookingId">) {

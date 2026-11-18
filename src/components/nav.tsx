@@ -12,12 +12,12 @@ const MEMBER_LINKS = [
   { href: "/rentals", label: "บันทึกเช่ารถ", short: "เช่ารถ", icon: CalendarCheck },
   { href: "/laundry", label: "ซักผ้า", short: "ซักผ้า", icon: Shirt },
   { href: "/records", label: "รายการทั้งหมด", short: "รายการ", icon: ClipboardList },
-  { href: "/report", label: "สรุปรายรับรายวัน", short: "สรุปรายรับ", icon: ReceiptText },
+  { href: "/report", label: "สรุปรายรับรายวัน", short: "สรุปยอด", icon: ReceiptText },
   { href: "/bikes", label: "ทะเบียนรถ", short: "รถ", icon: Bike },
   { href: "/settings", label: "ตั้งค่า", short: "ตั้งค่า", icon: Settings },
 ];
-/** แถบล่างบนมือถือมีที่ 5 ปุ่ม — ตั้งค่า / สรุปรายรับ ย้ายไปเป็นไอคอนที่แถบบน */
-const MOBILE_HIDDEN = new Set(["/settings", "/report"]);
+/** แถบล่างบนมือถือมีที่ 6 ปุ่ม — ตั้งค่าย้ายไปเป็นไอคอนเฟืองที่แถบบน */
+const MOBILE_HIDDEN = new Set(["/settings"]);
 
 // ผู้ที่ยังไม่ล็อกอินเห็นแค่แดชบอร์ด (อ่านอย่างเดียว)
 const GUEST_LINKS = [
@@ -112,11 +112,6 @@ export function MobileTopBar({ authed, canLogout }: NavProps) {
           <span className="shrink-0 text-xs text-muted max-sm:hidden">เกาะช้าง</span>
         </Link>
         <ThemeButton />
-        {authed && (
-          <Link href="/report" className={icon} aria-label="สรุปรายรับรายวัน">
-            <ReceiptText className="size-[18px]" />
-          </Link>
-        )}
         {authed && (
           <Link href="/settings" className={icon} aria-label="ตั้งค่า">
             <Settings className="size-[18px]" />
