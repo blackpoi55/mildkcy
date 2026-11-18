@@ -144,6 +144,7 @@ export function RentalsClient({
             discount: 0,
             fine: 0,
             total: bike.dailyRate,
+            returnExtra: 0,
             customer: "",
             note: "",
             createdAt: "",
@@ -1462,8 +1463,20 @@ function ReturnDialog({
           </span>
           <span className="tabular text-xl font-bold">{baht(totalFor(days))}</span>
         </div>
+        <AtReturn amount={totalFor(days) - (rental.total - rental.returnExtra)} />
       </div>
     </Modal>
+  );
+}
+
+/** เงินที่ต้องเก็บเพิ่ม/คืนลูกค้าตอนคืนรถ — นับเป็นรายรับของวันที่คืน (ใบสรุปของวันที่เช่าไม่เปลี่ยน) */
+function AtReturn({ amount }: { amount: number }) {
+  if (!amount) return null;
+  return (
+    <p className={cn("rounded-xl px-4 py-2.5 text-sm", amount > 0 ? "bg-warn-soft text-warn" : "bg-bad-soft text-bad")}>
+      {amount > 0 ? "เก็บเงินเพิ่มจากลูกค้า" : "คืนเงินให้ลูกค้า"} <b className="tabular">{baht(Math.abs(amount))}</b>
+      <span className="block text-xs opacity-80">นับเป็นรายรับของวันที่คืนรถ</span>
+    </p>
   );
 }
 

@@ -1,6 +1,6 @@
 import { addDays, addMonths, dayOfWeek, diffDays, rangeOf, shift, startOfMonth, thShort, TH_DAYS_SHORT, TH_MONTHS_SHORT, type Period } from "./dates";
 import { expiryState } from "./expiry";
-import { coversDay } from "./rental-status";
+import { coversDay, rentCashIn, returnDateOf } from "./rental-status";
 import { RENTABLE_STATUS, type Bike, type Laundry, type Rental } from "./schema";
 
 export type DayPoint = { date: string; label: string; rent: number; laundry: number; bikes: number };
@@ -16,7 +16,8 @@ function totals(rentals: Rental[], laundry: Laundry[], start: string, end: strin
   const days = diffDays(start, end) + 1;
   const bikeDays = sumBy(r, (x) => x.days);
   return {
-    rent: sumBy(r, (x) => x.total),
+    // รายได้ตามวันที่ได้เงิน (ค่าปรับ/วันที่เกินที่เก็บตอนคืนรถนับวันที่คืน)
+    rent: sumBy(rentals, (x) => rentCashIn(x, start, end)),
     laundry: sumBy(l, (x) => x.price),
     bikeDays,
     occupancy: rentableBikes ? (bikeDays / (rentableBikes * days)) * 100 : 0,
@@ -60,9 +61,11 @@ export function buildDashboard(
     ]),
   );
   for (const r of rentals) {
-    // รายได้นับที่วันเริ่มเช่า, จำนวนรถนับทุกวันที่รถออกไป
+    // รายได้นับตามวันที่ได้เงิน (ตอนเช่า / ตอนคืน), จำนวนรถนับทุกวันที่รถออกไป
     const p = byDate.get(r.date);
-    if (p) p.rent += r.total;
+    if (p) p.rent += r.total - r.returnExtra;
+    const back = r.returnExtra ? byDate.get(returnDateOf(r)) : undefined;
+    if (back) back.rent += r.returnExtra;
     for (const d of chartDays) if (coversDay(r, d, today)) byDate.get(d)!.bikes += 1;
   }
   for (const l of laundry) {
@@ -80,7 +83,9 @@ export function buildDashboard(
   const byMonth = new Map(months.map((m) => [m.month, m]));
   for (const r of rentals) {
     const m = byMonth.get(r.date.slice(0, 7));
-    if (m) m.rent += r.total;
+    if (m) m.rent += r.total - r.returnExtra;
+    const back = r.returnExtra ? byMonth.get(returnDateOf(r).slice(0, 7)) : undefined;
+    if (back) back.rent += r.returnExtra;
   }
   for (const l of laundry) {
     const m = byMonth.get(l.date.slice(0, 7));

@@ -7,6 +7,15 @@ export function returnDateOf(r: Pick<Rental, "date" | "returnDate" | "returnTime
   return r.returnTime ? r.returnDate || r.date : "";
 }
 
+/** เงินค่าเช่าที่ได้รับในช่วง from–to: ตอนปล่อยรถนับวันที่เช่า, ส่วนที่เก็บเพิ่ม/คืนให้ตอนคืนรถนับวันที่คืน */
+export function rentCashIn(r: Rental, from: string, to = from) {
+  let sum = 0;
+  if (r.date >= from && r.date <= to) sum += r.total - r.returnExtra;
+  const back = returnDateOf(r);
+  if (back && back >= from && back <= to) sum += r.returnExtra;
+  return sum;
+}
+
 /** "29 ต.ค. 69 12:12" — ใส่วันที่เสมอ ไม่งั้นคืนข้ามวันจะดูไม่ออก */
 export function returnedText(r: Pick<Rental, "date" | "returnDate" | "returnTime">) {
   return r.returnTime ? `${thShort(returnDateOf(r))} ${r.returnTime}` : "";

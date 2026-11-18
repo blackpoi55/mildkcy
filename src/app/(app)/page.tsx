@@ -9,7 +9,7 @@ import { buildDashboard, type Dashboard } from "@/lib/analytics";
 import { getBikes, getLaundry, getRentals } from "@/lib/data";
 import { isISODate, nowClock, nowTime, periodLabel, thShort, todayISO, type Period } from "@/lib/dates";
 import { baht, number, pctChange } from "@/lib/format";
-import { coversDay, dueSoonList } from "@/lib/rental-status";
+import { coversDay, dueSoonList, rentCashIn } from "@/lib/rental-status";
 import { isAuthed } from "@/lib/session";
 import { getStore } from "@/lib/store";
 import { MonthlyChart, Legend } from "./charts";
@@ -288,7 +288,7 @@ async function DashboardData({ searchParams }: { searchParams: PageProps<"/">["s
           {
             icon: <Wallet className="size-4" />,
             label: "รายได้วันนี้",
-            value: baht(todayRentals.filter((r) => r.date === today).reduce((s, r) => s + r.total, 0) + todayLaundry.reduce((s, l) => s + l.price, 0)),
+            value: baht(todayRentals.reduce((s, r) => s + rentCashIn(r, today), 0) + todayLaundry.reduce((s, l) => s + l.price, 0)),
           },
           { icon: <Shirt className="size-4" />, label: "ซักผ้าวันนี้", value: `${todayLaundry.length} รายการ` },
         ]}

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Badge, Card } from "@/components/ui";
 import { nowTime } from "@/lib/dates";
 import { baht, number } from "@/lib/format";
-import { durationText, dueText, overdueMinutes, returnedText } from "@/lib/rental-status";
+import { durationText, dueText, overdueMinutes, rentCashIn, returnedText } from "@/lib/rental-status";
 import type { Bike as BikeRow, Laundry, Rental } from "@/lib/schema";
 import { LiveBadge } from "./live";
 
@@ -90,8 +90,8 @@ export function TodayPanel({
   const outIds = new Set(out.map((r) => r.bikeId));
   const returnedAt = new Map(returned.map((r) => [r.bikeId, returnedText(r)]));
   const free = bikes.filter((b) => b.status === "เช่า" && !outIds.has(b.id));
-  // รายได้นับที่วันเริ่มเช่า (รายการที่เริ่มก่อนวันนี้แสดงสถานะอย่างเดียว)
-  const rentTotal = rentals.filter((r) => r.date === today).reduce((s, r) => s + r.total, 0);
+  // รายได้นับตามวันที่ได้เงิน: ค่าเช่าวันที่ปล่อยรถ + ส่วนที่เก็บเพิ่ม/คืนให้ตอนคืนรถวันนี้
+  const rentTotal = rentals.reduce((s, r) => s + rentCashIn(r, today), 0);
   const wash = [...laundry].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   const washTotal = wash.reduce((s, l) => s + l.price, 0);
   const washKg = wash.reduce((s, l) => s + l.kg, 0);

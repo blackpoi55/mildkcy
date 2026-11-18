@@ -126,6 +126,7 @@ function newRental(bike: Bike, fields: Partial<Rental> & { date: string }): Rent
     discount: 0,
     fine: 0,
     total: 0,
+    returnExtra: 0,
     customer: str(fields.customer),
     note: str(fields.note),
     createdAt: now(),
@@ -260,6 +261,10 @@ export async function setReturned(
       rowPatch = { ...rowPatch, discount, fine, note: str(extras.note) };
     }
     if (days !== null || extras) rowPatch.total = rentalTotal({ ...row, ...rowPatch });
+    // ยอดที่เปลี่ยนตอนคืนรถ (ค่าปรับ / วันที่เกิน / ส่วนลด) นับเป็นรายรับของวันที่คืน
+    // ยกเลิกการคืน → ไม่มีวันที่คืนให้นับ จึงรวมกลับไปที่วันที่เช่า
+    const paidAtRent = row.total - row.returnExtra;
+    rowPatch.returnExtra = t ? (rowPatch.total ?? row.total) - paidAtRent : 0;
     await store.updateMany(
       "rentals",
       booking
@@ -294,6 +299,7 @@ export async function saveRental(input: Partial<Rental>) {
     const store = getStore();
     const bike = (await store.all("bikes")).find((b) => b.id === input.bikeId);
     if (!bike) throw new Error("กรุณาเลือกรถ");
+    const prev = input.id ? (await store.all("rentals")).find((x) => x.id === input.id) : undefined;
     const r: Rental = {
       id: input.id || newId(),
       date: input.date,
@@ -311,11 +317,14 @@ export async function saveRental(input: Partial<Rental>) {
       discount: num(input.discount),
       fine: num(input.fine),
       total: 0,
+      returnExtra: 0,
       customer: str(input.customer),
       note: str(input.note),
       createdAt: input.createdAt || now(),
     };
     r.total = rentalTotal(r);
+    // แก้รายการที่คืนแล้ว: ยอดที่เปลี่ยนถือเป็นเงินที่เก็บเพิ่ม/คืนตอนคืนรถ (ใบสรุปของวันที่เช่าที่ส่งไปแล้วไม่เปลี่ยน)
+    if (prev?.returnTime && r.returnTime) r.returnExtra = prev.returnExtra + r.total - prev.total;
     if (input.id) await store.update("rentals", input.id, r);
     else await store.insert("rentals", [r]);
   });
@@ -495,6 +504,7 @@ export async function importSeed() {
         returnTime: "",
         bookingId: "",
         total: 0,
+        returnExtra: 0,
         createdAt: now(),
       };
       row.total = rentalTotal(row);
