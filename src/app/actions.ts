@@ -280,8 +280,11 @@ export async function setReturned(
 }
 
 /** เลิกทำการยกเลิกเช่า: ใส่รายการเดิมกลับ (ค่าเดิมทุกช่อง รวมเวลา ลูกค้า ส่วนลด) */
-/** ต่อเวลา / เลื่อนกำหนดคืนของการเช่าที่ยังไม่คืน — ส่วนต่างค่าเช่านับเป็นรายรับของวันนี้ */
-export async function extendRental(id: string, dueDate: string, dueTime: string) {
+/**
+ * ต่อเวลา / เลื่อนกำหนดคืนของการเช่าที่ยังไม่คืน — ส่วนต่างค่าเช่านับเป็นรายรับของวันนี้
+ * extraDiscount = ส่วนลดที่ให้เพิ่มตอนต่อเวลา (บวกเข้ากับส่วนลดเดิม), note = ต่อท้ายหมายเหตุเดิมพร้อมวันที่
+ */
+export async function extendRental(id: string, dueDate: string, dueTime: string, extraDiscount = 0, note = "") {
   return guard(async (): Promise<{ before: Rental; after: Rental }> => {
     if (!isISODate(dueDate)) throw new Error("กรุณาเลือกวันที่คืนใหม่");
     if (dueTime && !TIME_RE.test(dueTime)) throw new Error("เวลาไม่ถูกต้อง");
@@ -291,14 +294,24 @@ export async function extendRental(id: string, dueDate: string, dueTime: string)
     if (!row) throw new Error("ไม่พบรายการเช่านี้ (อาจถูกลบไปแล้ว)");
     if (row.returnTime) throw new Error("รถคันนี้คืนแล้ว — แก้ไขในหน้าต่างแก้ไขแทน");
     if (dueDate <= row.date) throw new Error("วันที่คืนต้องหลังวันที่เช่า");
+    const more = num(extraDiscount);
+    if (more < 0) throw new Error("ส่วนลดต้องไม่ติดลบ");
     // นับวันแบบเดียวกับตอนสร้างการเช่า
     const days = Math.max(1, diffDays(row.date, dueDate));
-    const next: Rental = { ...row, dueDate, dueTime: str(dueTime) || row.dueTime, days };
+    const today = todayISO();
+    const memo = str(note) && `ต่อเวลา ${thShort(today)}: ${str(note)}`;
+    const next: Rental = {
+      ...row,
+      dueDate,
+      dueTime: str(dueTime) || row.dueTime,
+      days,
+      discount: row.discount + more,
+      note: [row.note, memo].filter(Boolean).join(" · "),
+    };
     next.total = rentalTotal(next);
     // ห้ามทับการเช่าอื่นของรถคันเดียวกันในช่วงที่ต่อเพิ่ม
     const from = addDays(billingEnd(row), 1);
     const to = billingEnd(next);
-    const today = todayISO();
     const clash = all.find(
       (r) => r.bikeId === row.bikeId && r.id !== row.id && r.days > 0 && r.date <= to && lastDayOut(r, today) >= from,
     );

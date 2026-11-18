@@ -256,10 +256,11 @@ export function RentalsClient({
     });
 
   /** ต่อเวลา: เลื่อนกำหนดคืน ส่วนต่างค่าเช่านับเป็นรายรับวันนี้ — มีปุ่มเลิกทำ */
-  const confirmExtend = (r: Rental, dueDate: string, dueTime: string) =>
+  const confirmExtend = (r: Rental, input: ExtendInput) =>
     new Promise<boolean>((resolve) =>
       start(async () => {
-        const res = await extendRental(r.id, dueDate, dueTime);
+        const { dueDate, dueTime } = input;
+        const res = await extendRental(r.id, dueDate, dueTime, input.discount, input.note);
         if (!res.ok || !res.data) {
           toast.error(res.ok ? "เกิดข้อผิดพลาด" : res.error);
           return resolve(false);
@@ -1502,7 +1503,9 @@ function ReturnDialog({
   );
 }
 
-/** หน้าต่างต่อเวลา: เลือกวันที่/เวลาคืนใหม่ แล้วบอกเงินที่ต้องเก็บเพิ่ม */
+type ExtendInput = { dueDate: string; dueTime: string; discount: number; note: string };
+
+/** หน้าต่างต่อเวลา: เลือกวันที่/เวลาคืนใหม่ ส่วนลด หมายเหตุ แล้วบอกเงินที่ต้องเก็บเพิ่ม */
 function ExtendDialog({
   rental,
   today,
@@ -1512,9 +1515,9 @@ function ExtendDialog({
   rental: Rental | null;
   today: string;
   onClose: () => void;
-  onSubmit: (r: Rental, dueDate: string, dueTime: string) => Promise<boolean>;
+  onSubmit: (r: Rental, input: ExtendInput) => Promise<boolean>;
 }) {
-  const [form, setForm] = useState({ dueDate: "", dueTime: "" });
+  const [form, setForm] = useState({ dueDate: "", dueTime: "", discount: "", note: "" });
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<Rental | null>(null);
   // เปิดหน้าต่างใหม่ → ตั้งค่าเริ่มต้นเป็นกำหนดคืนเดิม + 1 วัน
@@ -1522,16 +1525,18 @@ function ExtendDialog({
     setLast(rental);
     if (rental) {
       const base = rental.dueDate && rental.dueDate >= today ? rental.dueDate : today;
-      setForm({ dueDate: addDays(base, 1), dueTime: rental.dueTime || rental.time || "10:00" });
+      setForm({ dueDate: addDays(base, 1), dueTime: rental.dueTime || rental.time || "10:00", discount: "", note: "" });
     }
   }
   if (!rental) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
   const days = form.dueDate > rental.date ? Math.max(1, diffDays(rental.date, form.dueDate)) : rental.days;
-  const extra = rentalTotal({ ...rental, days }) - rental.total;
+  const more = Math.max(0, Number(form.discount) || 0);
+  const total = rentalTotal({ ...rental, days, discount: rental.discount + more });
+  const extra = total - rental.total;
   const valid = form.dueDate > rental.date;
   const submit = async () => {
     setBusy(true);
-    const ok = await onSubmit(rental, form.dueDate, form.dueTime);
+    const ok = await onSubmit(rental, { dueDate: form.dueDate, dueTime: form.dueTime, discount: more, note: form.note });
     setBusy(false);
     if (ok) onClose();
   };
@@ -1569,15 +1574,34 @@ function ExtendDialog({
           <Field label="เวลา">
             <Input type="time" value={form.dueTime} onChange={(e) => setForm((f) => ({ ...f, dueTime: e.target.value }))} />
           </Field>
+          <Field label="ส่วนลดสำหรับต่อเวลา (ไม่บังคับ)">
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              placeholder="0"
+              value={form.discount}
+              onChange={(e) => setForm((f) => ({ ...f, discount: e.target.value }))}
+            />
+          </Field>
+          <Field label="หมายเหตุ (ไม่บังคับ)" className="col-span-2">
+            <Textarea
+              value={form.note}
+              onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="เช่น ลูกค้าขอต่ออีก 2 วัน / ลดให้ลูกค้าประจำ"
+            />
+          </Field>
         </div>
         <div className="flex items-center justify-between rounded-xl bg-surface-2 px-4 py-3">
           <span className="text-sm">
-            จำนวนวันเช่า
+            ยอดรวมการเช่าใหม่
             <span className="block text-xs text-muted">
               เดิม {rental.days} วัน → {days} วัน × {baht(rental.price)}
+              {rental.discount + more > 0 && ` − ส่วนลด ${baht(rental.discount + more)}`}
+              {rental.fine > 0 && ` + ค่าปรับ ${baht(rental.fine)}`}
             </span>
           </span>
-          <span className="tabular text-lg font-bold">{baht(rentalTotal({ ...rental, days }))}</span>
+          <span className="tabular text-lg font-bold">{baht(total)}</span>
         </div>
         <AtCounter amount={extra} when="ต่อเวลา" />
       </div>
